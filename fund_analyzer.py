@@ -278,6 +278,120 @@ class FundAnalyzer:
             traceback.print_exc()
             return None
 
+    def _get_fund_holdings(self, top=10):
+        """获取基金前十大持仓股票及实时行情"""
+        try:
+            print("[持仓] 开始获取...")
+            # 从天天基金网获取持仓数据
+            url = f"http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={self.fund_code}&topline={top}&rt=0.1234567"
+            print(f"[持仓] 请求: {url}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
+                'Referer': 'http://fund.eastmoney.com/'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            # 提取content字段
+            content_match = re.search(r'content:"(.*?)",', response.text, re.DOTALL)
+            if not content_match:
+                print("[持仓] 未找到content字段")
+                return []
+            
+            html_content = content_match.group(1).replace('\\"', '"')
+            
+            # 提取每一行
+            tbody_match = re.search(r'<tbody>(.*?)</tbody>', html_content, re.DOTALL)
+            if not tbody_match:
+                print("[持仓] 未找到tbody")
+                return []
+            
+            tbody = tbody_match.group(1)
+            rows = re.findall(r'<tr>.*?</tr>', tbody, re.DOTALL)
+            
+            holdings = []
+            for row in rows:
+                # 提取序号
+                seq_match = re.search(r'<td>(\d+)</td>', row)
+                seq = seq_match.group(1) if seq_match else ''
+                
+                # 提取股票代码
+                code_match = re.search(r'<td><a[^>]*>(\d+)</a></td>', row)
+                code = code_match.group(1) if code_match else ''
+                
+                # 提取股票名称
+                name_match = re.search(r'<td[^>]*class=["\']?tol["\']?[^>]*><a[^>]*>([^<]+)</a></td>', row)
+                name = name_match.group(1) if name_match else ''
+                
+                # 提取占比
+                ratio_match = re.search(r'<td[^>]*>(\d+\.?\d*%)</td>', row)
+                ratio = ratio_match.group(1) if ratio_match else ''
+                
+                if code and name and ratio:
+                    holdings.append({
+                        'seq': seq,
+                        'code': code,
+                        'name': name,
+                        'ratio': ratio,
+                        'price': None,  # 稍后获取实时价格
+                        'change': None,  # 稍后获取涨跌幅
+                        'change_pct': None
+                    })
+            
+            print(f"[持仓] 找到 {len(holdings)} 条持仓记录")
+            
+            # 批量获取股票实时价格
+            if holdings:
+                self._get_stock_prices(holdings)
+            
+            return holdings
+        
+        except Exception as e:
+            print(f"[持仓] 获取失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def _get_stock_prices(self, holdings):
+        """批量获取股票实时价格"""
+        try:
+            # 构建股票代码列表，东方财富格式：市场代码+股票代码
+            # 0开头: 深圳主板(sz)  3开头: 创业板(sz)  6开头: 上海主板(sh)
+            stock_codes = []
+            code_map = {}  # 映射完整代码到持仓索引
+            
+            for i, h in enumerate(holdings):
+                code = h['code']
+                # 6位数，前面加0.
+                full_code = f"0.{code}"
+                stock_codes.append(full_code)
+                code_map[full_code] = i
+            
+            if not stock_codes:
+                return
+            
+            # 使用东方财富批量查询API
+            codes_str = ','.join(stock_codes[:50])  # 限制50个
+            url = f"http://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=0&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f13,f14,f2,f3,f4&secids={codes_str}"
+            
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            
+            if 'data' in data and 'diff' in data['data']:
+                for item in data['data']['diff']:
+                    full_code = item.get('f12', '')  # 完整代码 0.300476
+                    if full_code in code_map:
+                        idx = code_map[full_code]
+                        holdings[idx]['price'] = item.get('f2', 0)  # 当前价
+                        holdings[idx]['change'] = item.get('f4', 0)  # 涨跌额
+                        holdings[idx]['change_pct'] = item.get('f3', 0)  # 涨跌幅
+            
+            print(f"[持仓] 获取到 {len([h for h in holdings if h['price'] is not None])} 只股票的实时价格")
+        
+        except Exception as e:
+            print(f"[持仓] 获取股票价格失败: {e}")
+
     def calculate_profit_loss(self, buy_price, shares):
         """计算盈亏"""
         if not self.fund_data:

@@ -502,6 +502,51 @@
             color: #999;
         }
 
+        .holdings-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .holdings-table th {
+            background: #f8f9fa;
+            color: #333;
+            font-weight: 600;
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        .holdings-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .holdings-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .stock-change {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .stock-change.positive {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .stock-change.negative {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .stock-change.neutral {
+            background: #e2e3e5;
+            color: #6c757d;
+        }
+
         @media (max-width: 768px) {
             .header h1 {
                 font-size: 2em;
@@ -606,10 +651,16 @@
                 <div id="strategy"></div>
             </div>
 
+            <!-- 前十大持仓 -->
+            <div class="card">
+                <h2 style="margin-bottom: 20px; color: #333;">📊 前十大持仓股票</h2>
+                <div id="holdings"></div>
+            </div>
+
             <!-- 历史走势 -->
             <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h2 style="color: #333; margin: 0;">📊 历史净值走势</h2>
+                    <h2 style="color: #333; margin: 0;">📈 历史净值走势</h2>
                     <div id="autoRefreshStatus" style="font-size: 0.9em; color: #666;"></div>
                 </div>
                 <div class="chart-container">
@@ -972,6 +1023,13 @@
                 </div>
             `;
 
+            // 显示持仓数据
+            if (data.holdings && data.holdings.length > 0) {
+                displayHoldings(data.holdings);
+            } else {
+                document.getElementById('holdings').innerHTML = '<p style="text-align: center; color: #666; padding: 50px;">暂无持仓数据</p>';
+            }
+
             if (data.history && data.history.length > 0) {
                 displayChart(data.history);
             } else {
@@ -1065,6 +1123,57 @@
                 analyzeFund();
             }
         });
+
+        function displayHoldings(holdings) {
+            let html = `
+                <table class="holdings-table">
+                    <thead>
+                        <tr>
+                            <th>序号</th>
+                            <th>股票代码</th>
+                            <th>股票名称</th>
+                            <th>最新价</th>
+                            <th>涨跌幅</th>
+                            <th>占净值比例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            holdings.forEach(h => {
+                const price = h.price !== null && h.price !== undefined ? h.price.toFixed(2) : '-';
+                const change = h.change_pct !== null && h.change_pct !== undefined ? h.change : '-';
+                const changePct = h.change_pct !== null && h.change_pct !== undefined ? h.change : '-';
+                let changeClass = 'neutral';
+                let changeText = change;
+
+                if (change > 0) {
+                    changeClass = 'positive';
+                    changeText = `+${changePct.toFixed(2)}%`;
+                } else if (change < 0) {
+                    changeClass = 'negative';
+                    changeText = `${changePct.toFixed(2)}%`;
+                }
+
+                html += `
+                    <tr>
+                        <td>${h.seq}</td>
+                        <td><a href="https://quote.eastmoney.com/${h.code}" target="_blank" style="color: #667eea;">${h.code}</a></td>
+                        <td><a href="https://quote.eastmoney.com/${h.code}" target="_blank" style="color: #333; font-weight: 600;">${h.name}</a></td>
+                        <td>${price}</td>
+                        <td><span class="stock-change ${changeClass}">${changeText}</span></td>
+                        <td><strong>${h.ratio}</strong></td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+
+            document.getElementById('holdings').innerHTML = html;
+        }
     </script>
 </body>
 </html>

@@ -77,6 +77,16 @@ def analyze_fund():
             print(f"历史数据获取失败（跳过）: {e}")
             history_data = []
 
+        # 获取前十大持仓
+        holdings = []
+        try:
+            print("获取持仓数据...")
+            holdings = analyzer._get_fund_holdings(10)
+            print(f"持仓数据: {len(holdings)} 条")
+        except Exception as e:
+            print(f"持仓数据获取失败（跳过）: {e}")
+            holdings = []
+
         print("=== 分析完成 ===")
         return jsonify({
             'success': True,
@@ -84,7 +94,8 @@ def analyze_fund():
                 'fund_info': fund_info,
                 'profit_loss': profit_loss,
                 'strategy': strategy,
-                'history': history_data
+                'history': history_data,
+                'holdings': holdings
             }
         })
 
