@@ -1141,18 +1141,19 @@
             `;
 
             holdings.forEach(h => {
-                const price = h.price !== null && h.price !== undefined ? h.price.toFixed(2) : '-';
-                const change = h.change_pct !== null && h.change_pct !== undefined ? h.change : '-';
-                const changePct = h.change_pct !== null && h.change_pct !== undefined ? h.change : '-';
-                let changeClass = 'neutral';
-                let changeText = change;
+                // 处理价格和涨跌幅
+                let priceHtml = h.price !== null && h.price !== undefined ?
+                    `<strong style="color: #333;">${h.price.toFixed(2)}</strong>` :
+                    '<span style="color: #999;">--</span>';
 
-                if (change > 0) {
-                    changeClass = 'positive';
-                    changeText = `+${changePct.toFixed(2)}%`;
-                } else if (change < 0) {
-                    changeClass = 'negative';
-                    changeText = `${changePct.toFixed(2)}%`;
+                let changeClass = 'neutral';
+                let changeSign = '';
+                let changeHtml = '<span style="color: #999;">--</span>';
+
+                if (h.change_pct !== null && h.change_pct !== undefined) {
+                    changeClass = h.change_pct > 0 ? 'positive' : (h.change_pct < 0 ? 'negative' : 'neutral');
+                    changeSign = h.change_pct > 0 ? '+' : '';
+                    changeHtml = `<span class="stock-change ${changeClass}">${changeSign}${h.change_pct.toFixed(2)}%</span>`;
                 }
 
                 html += `
@@ -1160,8 +1161,8 @@
                         <td>${h.seq}</td>
                         <td><a href="https://quote.eastmoney.com/${h.code}" target="_blank" style="color: #667eea;">${h.code}</a></td>
                         <td><a href="https://quote.eastmoney.com/${h.code}" target="_blank" style="color: #333; font-weight: 600;">${h.name}</a></td>
-                        <td>${price}</td>
-                        <td><span class="stock-change ${changeClass}">${changeText}</span></td>
+                        <td>${priceHtml}</td>
+                        <td>${changeHtml}</td>
                         <td><strong>${h.ratio}</strong></td>
                     </tr>
                 `;
@@ -1170,6 +1171,9 @@
             html += `
                     </tbody>
                 </table>
+                <div style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-size: 0.9em; color: #666;">
+                    💡 提示：价格数据可能受反爬虫限制无法获取。如显示"--"，请点击股票代码查看详情。
+                </div>
             `;
 
             document.getElementById('holdings').innerHTML = html;

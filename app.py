@@ -1,24 +1,40 @@
 from flask import Flask, render_template, request, jsonify
 from fund_analyzer import FundAnalyzer
+import sys
 
 app = Flask(__name__)
+
+# 强制刷新输出
+sys.stdout.reconfigure(line_buffering=True)
+
+# 简单的日志文件写入
+def log(message):
+    print(message, flush=True)
+    with open('h:/基金app/debug.log', 'a', encoding='utf-8') as f:
+        f.write(f"{message}\n")
 
 @app.route('/')
 def index():
     """主页"""
     return render_template('index.html')
 
+@app.route('/test')
+def test():
+    """测试接口"""
+    log("测试接口被访问")
+    return "OK"
+
 @app.route('/api/analyze', methods=['POST'])
 def analyze_fund():
     """分析基金API"""
-    print("=== 收到分析请求 ===")
+    log("=== 收到分析请求 ===")
     try:
         data = request.get_json()
         fund_code = data.get('fund_code', '').strip()
         buy_price = float(data.get('buy_price', 0))
         shares = float(data.get('shares', 0))
 
-        print(f"基金代码: {fund_code}, 成本: {buy_price}, 份额: {shares}")
+        log(f"基金代码: {fund_code}, 成本: {buy_price}, 份额: {shares}")
 
         # 验证输入
         if not fund_code or len(fund_code) != 6 or not fund_code.isdigit():
@@ -110,4 +126,4 @@ def analyze_fund():
 
 if __name__ == '__main__':
     print("启动Flask服务器...")
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    app.run(debug=False, host='127.0.0.1', port=5000)
