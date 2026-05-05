@@ -207,41 +207,20 @@ python app.py
 
 ---
 
-### 在哪里放API密钥？
-
-**打开文件 `deepseek_analyzer.py`，在文件顶部的第15行：**
-
-```python
-# =============================================
-# ⚠️ 在这里配置 DeepSeek API 密钥 ⚠️
-# =============================================
-# 方式1: 直接在这里填写密钥（不推荐，容易泄露）
-DEEPSEEK_API_KEY = ""  # ← 在这里填入你的API密钥！
-
-# 方式2: 使用环境变量（推荐，更安全）
-# 在命令行运行: set DEEPSEEK_API_KEY=your_key_here
-import os
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)
-```
-
-**步骤：**
-1. 打开 `deepseek_analyzer.py` 文件
-2. 找到第15行 `DEEPSEEK_API_KEY = ""`
-3. 将你的密钥填入引号内，例如：`DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxx"`
-4. 保存文件
-5. 重启应用: `start.bat restart`
-
----
-
 ### 配置API密钥（两种方式）
 
-**方式1: 直接填写（简单）**
-编辑 `deepseek_analyzer.py` 第15行：
-```python
-DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"  # ← 填入你的密钥
+**方式1: 创建 .env 文件（推荐）**
+
+在项目根目录（与 `app.py` 同级）创建 `.env` 文件：
+
+```bash
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-**方式2: 环境变量（推荐，更安全）**
+然后重启应用: `start.bat restart`
+
+**方式2: 环境变量（推荐）**
+
 ```bash
 # Windows
 set DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
@@ -252,13 +231,20 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
 ./start.sh
 ```
 
+**方式3: 直接编辑配置文件**
+
+编辑 `deepseek_analyzer.py` 第36行：
+```python
+DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"  # ← 填入你的密钥
+```
+
 ---
 
 ### 使用AI分析
 
 1. 重启应用后，分析任意基金
 2. 页面会显示 "🤖 AI智能分析" 卡片
-3. 点击 "🔮 AI分析" 按钮
+3. 点击 "开始分析" 按钮
 4. 等待几秒钟，获取专业的投资建议
 
 ### 关于费用
