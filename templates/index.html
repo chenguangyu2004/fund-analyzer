@@ -1757,7 +1757,7 @@
                 }
             } catch (error) {
                 showLoading(false);
-                showError('网络错误，请检查连接后重试');
+                showError('无法连接服务器，请确保已启动 Flask 服务（运行 start.bat 或 python app.py）');
             }
         }
 
@@ -2602,6 +2602,9 @@
 
         // ===== 初始化 =====
         window.onload = function() {
+            // 检测服务器连接状态
+            checkServerConnection();
+            
             // 加载已保存基金
             const saved = localStorage.getItem('savedFunds');
             if (saved) {
@@ -2614,6 +2617,23 @@
                 if (chart) chart.resize();
             });
         };
+
+        // 检测服务器连接
+        async function checkServerConnection() {
+            try {
+                const response = await fetch('/api/fund/000001/info');
+                if (response.ok) {
+                    console.log('服务器连接正常');
+                }
+            } catch (error) {
+                // 服务器未启动，显示提示
+                const navActions = document.querySelector('.nav-actions');
+                if (navActions) {
+                    navActions.innerHTML += '<span style="color: var(--accent-red); font-size: 0.8em; margin-right: 10px;">⚠ 服务器未连接</span>';
+                }
+                showError('⚠ 服务器未启动，请先运行 start.bat 或 python app.py');
+            }
+        }
 
         // 回车键快捷搜索
         document.addEventListener('keypress', function(e) {
