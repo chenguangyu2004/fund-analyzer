@@ -8,14 +8,19 @@ echo.
 REM 检查是否需要重启
 if "%1"=="restart" (
     echo [模式] 重启模式 - 停止旧服务器...
-    taskkill /F /IM python.exe >nul 2>&1
+    REM 只停止占用5000端口的进程，避免误杀其他Python进程
+    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :5000 2^>nul') do (
+        if not "%%a"=="" (
+            taskkill /F /PID %%a >nul 2>&1
+        )
+    )
     timeout /t 2 /nobreak >nul
     echo.
     echo 旧服务器已停止
     echo.
 ) else (
     echo [模式] 初次启动 - 检查依赖...
-    pip install -r requirements.txt
+    pip install -r requirements.txt 2>&1
 
     if %errorlevel% neq 0 (
         echo.

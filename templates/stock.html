@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票详情 - 基金分析工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #ffffff;
+            --bg-hover: #f1f5f9;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --accent-blue: #2563eb;
+            --accent-green: #059669;
+            --accent-red: #dc2626;
+            --accent-amber: #d97706;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background:
+                radial-gradient(ellipse 80% 50% at 20% 40%, rgba(37, 99, 235, 0.12) 0%, transparent 50%),
+                radial-gradient(ellipse 60% 40% at 80% 20%, rgba(5, 150, 105, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse 50% 60% at 70% 80%, rgba(124, 58, 237, 0.06) 0%, transparent 50%),
+                linear-gradient(180deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            padding: 20px;
+            color: var(--text-primary);
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image:
+                linear-gradient(rgba(148, 163, 184, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .kline-container {
+            margin-top: 20px;
+        }
+        
+        .kline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .kline-tabs {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .kline-tab {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .kline-tab:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .kline-tab.active {
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            position: relative;
+        }
+
+        .header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.3), transparent);
+        }
+
+        .back-btn {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.1) 100%);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 1em;
+            margin-right: 20px;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+
+        .back-btn:hover {
+            background: linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.15) 100%);
+            transform: translateY(-1px);
+        }
+
+        .header h1 {
+            font-size: 1.6em;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+            background: linear-gradient(135deg, #ffffff 0%, #94a3b8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .stock-header {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            padding: 28px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--border-color);
+        }
+
+        .stock-main-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .stock-name {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+
+        .stock-code {
+            font-size: 1em;
+            color: var(--text-secondary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .stock-market {
+            display: inline-block;
+            padding: 4px 12px;
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            color: var(--accent-blue);
+            border-radius: 20px;
+            font-size: 0.85em;
+            margin-left: 10px;
+            font-weight: 600;
+            border: 1px solid #bfdbfe;
+        }
+
+        .stock-price-info {
+            text-align: right;
+        }
+
+        .stock-price {
+            font-size: 2.2em;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .stock-change {
+            font-size: 1.1em;
+            margin-top: 6px;
+            font-weight: 600;
+        }
+
+        .stock-change.positive {
+            color: var(--accent-red);
+        }
+
+        .stock-change.negative {
+            color: var(--accent-green);
+        }
+
+        .price-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .price-item {
+            padding: 16px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s ease;
+        }
+
+        .price-item:hover {
+            background: #ffffff;
+            box-shadow: var(--shadow-md);
+            transform: translateY(-2px);
+        }
+
+        .price-item label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.82em;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        .price-item .value {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            padding: 28px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--border-color);
+            transition: box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+        }
+
+        .card h2 {
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--border-color);
+            font-size: 1.15em;
+            font-weight: 600;
+        }
+
+        .company-info {
+            line-height: 1.8;
+            color: var(--text-secondary);
+        }
+
+        .company-info p {
+            margin-bottom: 12px;
+        }
+
+        .company-info strong {
+            color: var(--text-primary);
+        }
+
+        .news-list {
+            list-style: none;
+        }
+
+        .news-item {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-radius: var(--radius-sm);
+        }
+
+        .news-item:hover {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            padding-left: 20px;
+        }
+
+        .news-item:last-child {
+            border-bottom: none;
+        }
+
+        .news-title {
+            font-size: 1em;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            line-height: 1.5;
+            font-weight: 500;
+        }
+
+        .news-meta {
+            display: flex;
+            gap: 12px;
+            font-size: 0.82em;
+            color: var(--text-secondary);
+            align-items: center;
+        }
+
+        .news-type {
+            padding: 3px 10px;
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            color: var(--accent-blue);
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            border: 1px solid #bfdbfe;
+        }
+
+        .industry-stocks {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+        }
+
+        .industry-stock-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 18px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid var(--border-color);
+        }
+
+        .industry-stock-item:hover {
+            background: #ffffff;
+            transform: translateX(4px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stock-info-left {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stock-name-small {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .stock-code-small {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .stock-right {
+            text-align: right;
+        }
+
+        .stock-price-small {
+            font-weight: 700;
+            color: var(--text-primary);
+            font-size: 1.1em;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .stock-change-small {
+            font-size: 0.9em;
+            margin-top: 4px;
+            font-weight: 600;
+        }
+
+        .stock-change-small.positive {
+            color: var(--accent-red);
+        }
+
+        .stock-change-small.negative {
+            color: var(--accent-green);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: white;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 36px;
+            height: 36px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 15px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+            color: #991b1b;
+            padding: 20px;
+            border-radius: var(--radius-md);
+            text-align: center;
+            border: 1px solid #fecaca;
+        }
+
+        .financial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .financial-item {
+            padding: 20px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: var(--radius-md);
+            text-align: center;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s ease;
+        }
+
+        .financial-item:hover {
+            background: #ffffff;
+            box-shadow: var(--shadow-md);
+            transform: translateY(-2px);
+        }
+
+        .financial-item label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 0.82em;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        .financial-item .value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .financial-item .unit {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            margin-left: 5px;
+        }
+
+        .holder-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .holder-item {
+            padding: 16px;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-radius: var(--radius-md);
+            border-left: 3px solid var(--accent-blue);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-blue);
+            transition: all 0.2s ease;
+        }
+
+        .holder-item:hover {
+            background: #ffffff;
+            box-shadow: var(--shadow-sm);
+            transform: translateX(3px);
+        }
+
+        .holder-item label {
+            color: var(--text-secondary);
+            font-size: 0.82em;
+            font-weight: 500;
+        }
+
+        .holder-item .value {
+            color: var(--text-primary);
+            font-weight: 700;
+            font-size: 1.1em;
+            margin-top: 6px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .grid-2col {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 12px; }
+            .header h1 { font-size: 1.3em; }
+            .back-btn { padding: 8px 14px; font-size: 0.9em; }
+            .card { padding: 18px; border-radius: var(--radius-md); }
+            .stock-main-info { flex-direction: column; }
+            .stock-price-info { text-align: left; }
+            .stock-name { font-size: 1.5em; }
+            .stock-price { font-size: 1.8em; }
+            .price-details { grid-template-columns: repeat(2, 1fr); }
+            .financial-grid { grid-template-columns: repeat(2, 1fr); }
+            .grid-2col {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <button class="back-btn" onclick="goBack()">← 返回基金分析</button>
+            <h1>📊 股票详情</h1>
+        </div>
+
+        <div id="loading" class="loading">
+            正在加载股票数据...
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="content" style="display: none;">
+            <div class="stock-header">
+                <div class="stock-main-info">
+                    <div>
+                        <div class="stock-name" id="stockName">--</div>
+                        <div>
+                            <span class="stock-code" id="stockCode">--</span>
+                            <span class="stock-market" id="stockMarket">--</span>
+                        </div>
+                    </div>
+                    <div class="stock-price-info">
+                        <div class="stock-price" id="stockPrice">--</div>
+                        <div class="stock-change" id="stockChange">--</div>
+                    </div>
+                </div>
+                <div class="price-details" id="priceDetails"></div>
+            </div>
+
+            <!-- K线图 -->
+            <div class="card kline-container">
+                <div class="kline-header">
+                    <h2>📈 K线图</h2>
+                    <div class="kline-tabs">
+                        <button class="kline-tab active" data-period="daily" onclick="switchKlinePeriod('daily')">日K</button>
+                        <button class="kline-tab" data-period="weekly" onclick="switchKlinePeriod('weekly')">周K</button>
+                        <button class="kline-tab" data-period="monthly" onclick="switchKlinePeriod('monthly')">月K</button>
+                    </div>
+                </div>
+                <div id="klineChart" style="width: 100%; height: 400px;"></div>
+            </div>
+
+            <div class="grid-2col">
+                <div class="card">
+                    <h2>🏢 公司说明</h2>
+                    <div class="company-info" id="companyInfo">
+                        <div class="no-data">暂无公司信息</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>👥 持股分析</h2>
+                    <div id="holderAnalysis">
+                        <div class="no-data">暂无持股数据</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>📰 相关财经新闻</h2>
+                <div id="newsSection">
+                    <div class="no-data">暂无新闻</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>🏆 行业龙头股</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.95em;">点击股票查看详情</p>
+                <div class="industry-stocks" id="industryStocks">
+                    <div class="no-data">暂无数据</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const stockCode = urlParams.get('code');
+        const stockName = urlParams.get('name') || '';
+        const fundCode = urlParams.get('fund') || '';
+        
+        let klineChart = null;
+        let currentKlinePeriod = 'daily';
+        let klineResizeListenerAdded = false;
+
+        window.onload = function() {
+            if (stockCode) {
+                loadStockData();
+            } else {
+                showError('缺少股票代码参数');
+            }
+        };
+
+        function goBack() {
+            if (fundCode) {
+                window.location.href = '/';
+            } else {
+                window.history.back();
+            }
+        }
+
+        async function loadStockData() {
+            try {
+                console.log('开始加载股票数据:', stockCode);
+                const response = await fetch(`/api/stock/${stockCode}`);
+                console.log('响应状态:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP错误: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                console.log('API返回结果:', result);
+
+                document.getElementById('loading').style.display = 'none';
+
+                if (result.success) {
+                    displayStockData(result.data);
+                    document.getElementById('content').style.display = 'block';
+                    // 加载K线图
+                    loadKlineData(currentKlinePeriod);
+                } else {
+                    showError(result.error || '加载失败');
+                }
+            } catch (error) {
+                console.error('加载股票数据失败:', error);
+                document.getElementById('loading').style.display = 'none';
+                showError('网络错误，请检查连接后重试: ' + error.message);
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('error').textContent = message;
+            document.getElementById('error').style.display = 'block';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function displayStockData(data) {
+            document.getElementById('stockName').textContent = data.name || data.company_name || stockName || stockCode;
+            document.getElementById('stockCode').textContent = data.code;
+            document.getElementById('stockMarket').textContent = data.market || getMarketName(data.code);
+
+            const price = Number(data.price) || 0;
+            const change = Number(data.change) || 0;
+            const changePct = Number(data.change_pct) || 0;
+            const sign = change >= 0 ? '+' : '';
+            const changeClass = change >= 0 ? 'positive' : 'negative';
+
+            document.getElementById('stockPrice').textContent = price > 0 ? price.toFixed(2) : '--';
+            document.getElementById('stockPrice').style.color = change >= 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+            document.getElementById('stockChange').textContent = changePct !== 0 ? 
+                `${sign}${change.toFixed(2)} (${sign}${changePct.toFixed(2)}%)` : '--';
+            document.getElementById('stockChange').className = `stock-change ${changeClass}`;
+
+            const priceDetails = document.getElementById('priceDetails');
+            const details = [
+                { label: '昨收', value: formatPrice(data.prev_close) },
+                { label: '今开', value: formatPrice(data.open) },
+                { label: '最高', value: formatPrice(data.high) },
+                { label: '最低', value: formatPrice(data.low) },
+                { label: '成交量', value: formatNumber(data.volume) },
+                { label: '成交额', value: formatAmount(data.amount) },
+                { label: '市盈率(PE)', value: data.pe > 0 ? Number(data.pe).toFixed(2) : '--' },
+                { label: '市净率(PB)', value: data.pb > 0 ? Number(data.pb).toFixed(2) : '--' },
+                { label: '股息率', value: data.dividend_yield > 0 ? Number(data.dividend_yield).toFixed(2) + '%' : '--' },
+                { label: '总市值', value: formatMarketCap(data.market_cap) },
+            ];
+
+            priceDetails.innerHTML = details.map(d => `
+                <div class="price-item">
+                    <label>${d.label}</label>
+                    <div class="value">${d.value}</div>
+                </div>
+            `).join('');
+
+            const companyInfo = document.getElementById('companyInfo');
+            if (data.company_name || data.description) {
+                companyInfo.innerHTML = `
+                    ${data.company_name ? `<p><strong>公司全称：</strong>${escapeHtml(data.company_name)}</p>` : ''}
+                    ${data.english_name ? `<p><strong>英文名称：</strong>${escapeHtml(data.english_name)}</p>` : ''}
+                    ${data.industry ? `<p><strong>所属行业：</strong>${escapeHtml(data.industry)}</p>` : ''}
+                    ${data.listing_date ? `<p><strong>上市日期：</strong>${escapeHtml(data.listing_date)}</p>` : ''}
+                    ${data.address ? `<p><strong>注册地址：</strong>${escapeHtml(data.address)}</p>` : ''}
+                    ${data.website ? `<p><strong>官方网站：</strong><a href="${escapeHtml(data.website)}" target="_blank">${escapeHtml(data.website)}</a></p>` : ''}
+                    ${data.description ? `<p style="margin-top: 15px; text-indent: 2em; line-height: 1.8;">${escapeHtml(data.description)}</p>` : ''}
+                `;
+            }
+
+            const holderAnalysis = document.getElementById('holderAnalysis');
+            if (data.holder_analysis) {
+                const ha = data.holder_analysis;
+                const holderCount = ha.holder_count;
+                const holderChange = Number(ha.holder_change) || 0;
+                holderAnalysis.innerHTML = `
+                    <div class="financial-grid">
+                        <div class="financial-item">
+                            <label>股东总数</label>
+                            <div class="value">${typeof holderCount === 'number' ? formatNumber(holderCount) : holderCount}</div>
+                        </div>
+                        <div class="financial-item">
+                            <label>股东户数变化</label>
+                            <div class="value" style="color: ${holderChange >= 0 ? 'var(--accent-red)' : 'var(--accent-green)'}">
+                                ${typeof ha.holder_change === 'number' ? (holderChange >= 0 ? '+' : '') + holderChange.toFixed(2) + '%' : '--'}
+                            </div>
+                        </div>
+                    </div>
+                    ${ha.top_holders && ha.top_holders.length > 0 ? `
+                        <h3 style="margin-top: 20px; color: var(--text-primary); font-size: 1.05em; font-weight: 600;">十大流通股东</h3>
+                        <div class="holder-list" style="margin-top: 15px;">
+                            ${ha.top_holders.map(h => `
+                                <div class="holder-item">
+                                    <label>${h.gdmc || '机构投资者'}</label>
+                                    <div class="value">${h.cgsl || '--'} (${h.bdbl || '--'}%)</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                `;
+            }
+
+            const newsSection = document.getElementById('newsSection');
+            if (data.news && data.news.length > 0) {
+                newsSection.innerHTML = `
+                    <ul class="news-list">
+                        ${data.news.map(news => `
+                            <li class="news-item" onclick="window.open('https://finance.eastmoney.com/news/${encodeURIComponent(news.art_id || '')}.html', '_blank')">
+                                <div class="news-title">${escapeHtml(news.title || '')}</div>
+                                <div class="news-meta">
+                                    <span>${escapeHtml(news.publish_time || news.notice_date || '')}</span>
+                                    ${news.type ? `<span class="news-type">${escapeHtml(news.type)}</span>` : ''}
+                                    ${news.source ? `<span>${escapeHtml(news.source)}</span>` : ''}
+                                </div>
+                            </li>
+                        `).join('')}
+                    </ul>
+                `;
+            }
+
+            const industryStocks = document.getElementById('industryStocks');
+            if (data.industry_leaders && data.industry_leaders.length > 0) {
+                industryStocks.innerHTML = data.industry_leaders.map(stock => {
+                    const changePct = stock.change_pct || 0;
+                    const changeClass = changePct >= 0 ? 'positive' : 'negative';
+                    const sign = changePct >= 0 ? '+' : '';
+                    const safeName = escapeHtml(stock.name || '');
+                    const safeCode = escapeHtml(stock.code || '');
+                    const safeMarket = escapeHtml(stock.market || '');
+                    return `
+                        <div class="industry-stock-item" onclick="viewStock('${safeCode}', '${safeName}')">
+                            <div class="stock-info-left">
+                                <div class="stock-name-small">${safeName}</div>
+                                <div class="stock-code-small">${safeCode} ${safeMarket}</div>
+                            </div>
+                            <div class="stock-right">
+                                <div class="stock-price-small">${stock.price > 0 ? stock.price.toFixed(2) : '--'}</div>
+                                <div class="stock-change-small ${changeClass}">${changePct !== 0 ? `${sign}${changePct.toFixed(2)}%` : '--'}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        function viewStock(code, name) {
+            window.location.href = `/stock?code=${code}&name=${encodeURIComponent(name)}&fund=${fundCode}`;
+        }
+
+        function getMarketName(code) {
+            if (code.length === 5) return '港股';
+            if (code.startsWith('6')) return '上证A股';
+            if (code.startsWith('0') || code.startsWith('3')) return '深证A股';
+            if (code.startsWith('8') || code.startsWith('4') || code.startsWith('9')) return '北交所';
+            return '未知';
+        }
+
+        function formatPrice(num) {
+            const n = Number(num);
+            if (!n || isNaN(n) || n === 0) return '--';
+            return n.toFixed(2);
+        }
+
+        function formatNumber(num) {
+            const n = Number(num);
+            if (!n || isNaN(n) || n === 0) return '--';
+            if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
+            if (n >= 10000) return (n / 10000).toFixed(2) + '万';
+            return n.toFixed(2);
+        }
+
+        function formatAmount(num) {
+            const n = Number(num);
+            if (!n || isNaN(n) || n === 0) return '--';
+            if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
+            if (n >= 10000) return (n / 10000).toFixed(2) + '万';
+            return n.toFixed(2);
+        }
+
+        function formatMarketCap(num) {
+            const n = Number(num);
+            if (!n || isNaN(n) || n === 0) return '--';
+            if (n >= 1000000000000) return (n / 1000000000000).toFixed(2) + '万亿';
+            if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
+            return (n / 100000000).toFixed(2) + '亿';
+        }
+        
+        // K线图相关函数
+        async function loadKlineData(period) {
+            try {
+                const response = await fetch(`/api/stock/${stockCode}/kline?period=${period}&limit=60`);
+                const result = await response.json();
+                
+                if (result.success && result.data && result.data.length > 0) {
+                    renderKlineChart(result.data);
+                } else {
+                    document.getElementById('klineChart').innerHTML = '<div style="text-align:center;padding:50px;color:var(--text-secondary);">暂无K线数据</div>';
+                }
+            } catch (error) {
+                console.error('加载K线数据失败:', error);
+                document.getElementById('klineChart').innerHTML = '<div style="text-align:center;padding:50px;color:var(--text-secondary);">K线数据加载失败</div>';
+            }
+        }
+        
+        function switchKlinePeriod(period) {
+            currentKlinePeriod = period;
+            // 更新标签样式
+            document.querySelectorAll('.kline-tab').forEach(tab => {
+                tab.classList.remove('active');
+                if (tab.dataset.period === period) {
+                    tab.classList.add('active');
+                }
+            });
+            // 重新加载K线数据
+            loadKlineData(period);
+        }
+        
+        function renderKlineChart(data) {
+            const chartDom = document.getElementById('klineChart');
+            
+            if (!klineChart) {
+                klineChart = echarts.init(chartDom);
+            }
+            
+            // 准备数据
+            const dates = data.map(item => item.date);
+            const ohlc = data.map(item => [item.open, item.close, item.low, item.high]);
+            const volumes = data.map(item => item.volume);
+            
+            // 计算涨跌颜色
+            const colorUp = '#ef5350';
+            const colorDown = '#26a69a';
+            const colorFlat = '#999';
+            
+            const option = {
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'cross' },
+                    formatter: function (params) {
+                        const data = params[0];
+                        const kdata = ohlc[data.dataIndex];
+                        const vol = volumes[data.dataIndex];
+                        const change = kdata[1] - kdata[0];
+                        const changePct = kdata[0] !== 0 ? ((change / kdata[0]) * 100).toFixed(2) : 0;
+                        const color = change > 0 ? colorUp : (change < 0 ? colorDown : colorFlat);
+                        
+                        return `
+                            <div style="font-family: Arial, sans-serif;">
+                                <div style="font-weight: bold; margin-bottom: 5px;">${data.axisValue}</div>
+                                <div>开盘: <span style="color:${color}">${kdata[0]}</span></div>
+                                <div>收盘: <span style="color:${color}">${kdata[1]}</span></div>
+                                <div>最低: ${kdata[2]}</div>
+                                <div>最高: ${kdata[3]}</div>
+                                <div>涨跌: <span style="color:${color}">${change > 0 ? '+' : ''}${change.toFixed(2)} (${change > 0 ? '+' : ''}${changePct}%)</span></div>
+                                <div>成交量: ${formatVolume(vol)}</div>
+                            </div>
+                        `;
+                    }
+                },
+                grid: [
+                    { left: '10%', right: '8%', top: '10%', height: '55%' },
+                    { left: '10%', right: '8%', top: '72%', height: '15%' }
+                ],
+                xAxis: [
+                    {
+                        type: 'category',
+                        data: dates,
+                        gridIndex: 0,
+                        axisLabel: { show: false },
+                        axisLine: { lineStyle: { color: '#e2e8f0' } },
+                        splitLine: { show: false }
+                    },
+                    {
+                        type: 'category',
+                        data: dates,
+                        gridIndex: 1,
+                        axisLabel: { 
+                            color: '#64748b',
+                            fontSize: 10,
+                            formatter: function(value) {
+                                return value.substring(5);
+                            }
+                        },
+                        axisLine: { lineStyle: { color: '#e2e8f0' } },
+                        splitLine: { show: false }
+                    }
+                ],
+                yAxis: [
+                    {
+                        scale: true,
+                        gridIndex: 0,
+                        splitLine: { lineStyle: { color: '#f1f5f9', type: 'dashed' } },
+                        axisLabel: { color: '#64748b' }
+                    },
+                    {
+                        scale: true,
+                        gridIndex: 1,
+                        splitNumber: 2,
+                        gridLine: { lineStyle: { color: '#f1f5f9', type: 'dashed' } },
+                        axisLabel: { 
+                            color: '#64748b',
+                            formatter: function(value) {
+                                if (value >= 100000000) return (value / 100000000).toFixed(0) + '亿';
+                                if (value >= 10000) return (value / 10000).toFixed(0) + '万';
+                                return value;
+                            }
+                        }
+                    }
+                ],
+                dataZoom: [
+                    { type: 'inside', xAxisIndex: [0, 1], start: 70, end: 100 },
+                    { type: 'slider', xAxisIndex: [0, 1], start: 70, end: 100, height: 20, bottom: 10 }
+                ],
+                series: [
+                    {
+                        name: 'K线',
+                        type: 'candlestick',
+                        data: ohlc,
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        itemStyle: {
+                            color: colorUp,
+                            color0: colorDown,
+                            borderColor: colorUp,
+                            borderColor0: colorDown
+                        }
+                    },
+                    {
+                        name: '成交量',
+                        type: 'bar',
+                        data: volumes,
+                        xAxisIndex: 1,
+                        yAxisIndex: 1,
+                        itemStyle: {
+                            color: function(params) {
+                                const kdata = ohlc[params.dataIndex];
+                                return kdata[1] >= kdata[0] ? colorUp : colorDown;
+                            }
+                        }
+                    }
+                ]
+            };
+            
+            klineChart.setOption(option, true);
+            
+            // 响应窗口大小变化（只添加一次事件监听器）
+            if (!klineResizeListenerAdded) {
+                window.addEventListener('resize', function() {
+                    klineChart && klineChart.resize();
+                });
+                klineResizeListenerAdded = true;
+            }
+        }
+        
+        function formatVolume(vol) {
+            if (!vol) return '--';
+            if (vol >= 100000000) return (vol / 100000000).toFixed(2) + '亿';
+            if (vol >= 10000) return (vol / 10000).toFixed(2) + '万';
+            return vol.toFixed(0);
+        }
+    </script>
+</body>
+</html>

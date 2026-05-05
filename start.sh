@@ -5,6 +5,17 @@ echo "    基金分析App - 启动脚本"
 echo "===================================="
 echo ""
 
+# 检查是否需要重启
+if [ "$1" == "restart" ]; then
+    echo "[模式] 重启模式 - 停止旧服务器..."
+    # 只停止占用5000端口的进程
+    lsof -ti:5000 | xargs kill -9 2>/dev/null
+    sleep 2
+    echo ""
+    echo "旧服务器已停止"
+    echo ""
+fi
+
 echo "[1/2] 检查并安装依赖..."
 pip3 install -r requirements.txt
 
@@ -21,6 +32,8 @@ echo "🚀 应用正在启动..."
 echo "📱 请在浏览器中访问: http://127.0.0.1:5000"
 echo ""
 echo "按 Ctrl+C 停止应用"
+echo ""
+echo "[重启提示] 修改代码后，运行: ./start.sh restart"
 echo ""
 
 python3 app.py
