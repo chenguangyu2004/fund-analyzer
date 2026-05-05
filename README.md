@@ -211,7 +211,7 @@ python app.py
 
 **方式1: 创建 .env 文件（推荐）**
 
-在项目根目录（与 `app.py` 同级）创建 `.env` 文件：
+在项目根目录（与 `app.py` 同级）创建 `.env` 文件（可直接复制.env.example）：
 
 ```bash
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
