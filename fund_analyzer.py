@@ -290,7 +290,12 @@ class FundAnalyzer:
             return None
         
         if fund_name:
-            fund_name = fund_name.replace('_ 基金档案 _ 天天基金网', '').replace('_基金档案_', '').replace('_天天基金网', '').strip()
+            # 清理名称中的各种后缀
+            for suffix in ['_ 基金档案 _ 天天基金网', '_基金档案_', '_ 基金历史净值 _ 天天基金网',
+                           '_基金历史净值_', '_天天基金网', '基金历史净值 基金档案',
+                           '基金历史净值', '基金档案', '天天基金网']:
+                fund_name = fund_name.replace(suffix, '')
+            fund_name = fund_name.strip()
         
         return {
             'fund_name': fund_name if fund_name else f'基金{self.fund_code}',
