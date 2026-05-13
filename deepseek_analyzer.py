@@ -328,7 +328,7 @@ class DeepSeekAnalyzer:
             raise Exception("DeepSeek API密钥未配置")
         
         data = {
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-pro",
             "messages": [
                 {
                     "role": "system",
