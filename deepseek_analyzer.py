@@ -10,12 +10,18 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union
 
 # 日志函数
+import sys
 def log(message):
-    """简单的日志输出"""
-    print(message, flush=True)
+    """简单的日志输出（兼容GBK编码）"""
+    try:
+        print(message, flush=True)
+    except UnicodeEncodeError:
+        # 兼容Windows GBK终端
+        safe_msg = message.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+        print(safe_msg.encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding, errors='replace'), flush=True)
 
 # =============================================
-# ⚠️ DeepSeek API 密钥配置 ⚠️
+# [注意] DeepSeek API 密钥配置
 # =============================================
 # 使用环境变量方式（推荐，更安全）
 # 在命令行运行: set DEEPSEEK_API_KEY=your_key_here
@@ -77,12 +83,13 @@ class DeepSeekAnalyzer:
         try:
             # 调用DeepSeek API
             result = self._call_deepseek_api(prompt)
-            log("✅ AI API调用成功 （非降级）")
+            log("AI API调用成功 （非降级）")
             return result
         except Exception as e:
-            log(f"❌ AI API调用失败，使用降级方案: {e}")
-            # 返回降级方案
-            return self._generate_fallback_analysis(fund_info, holdings)
+            error_msg = str(e)
+            log(f"AI API调用失败，使用降级方案: {error_msg}")
+            # 返回降级方案（带具体错误信息）
+            return self._generate_fallback_analysis(fund_info, holdings, error_msg)
     
     @staticmethod
     def _format_manager_history(manager_data: Dict) -> str:
@@ -96,7 +103,7 @@ class DeepSeekAnalyzer:
         
         lines = [f"- 当前基金经理: {manager}"]
         if recent_changed:
-            lines.append(f"- ⚠️ 近期存在基金经理变更！变更日期: {change_date}")
+            lines.append(f"- [注意] 近期存在基金经理变更！变更日期: {change_date}")
         else:
             lines.append("- 近期无基金经理变更")
         
@@ -131,7 +138,7 @@ class DeepSeekAnalyzer:
         # 格式化持仓数据
         holdings_text = ""
         if holdings:
-            for h in holdings[:10]:
+            for h in holdings:
                 holdings_text += f"- {h.get('name', 'N/A')} ({h.get('code', 'N/A')}): 持仓占比 {h.get('ratio', 'N/A')}\n"
         
         # 格式化新闻（多渠道来源）
@@ -188,7 +195,7 @@ class DeepSeekAnalyzer:
                     for m in months[-12:]:  # 最多显示12个月
                         d = monthly_data[m]
                         m_change = ((d['last_close'] - d['first_close']) / d['first_close'] * 100) if d['first_close'] else 0
-                        m_trend = '📈' if m_change >= 0 else '📉'
+                        m_trend = '↑' if m_change >= 0 else '↓'
                         month_trends.append(f"{m[-2:]}月{m_trend}({m_change:+.1f}%)")
                     
                     kline_text += f"- {stock_name}({stock_code}): 近1年{total_trend} {abs(total_change_pct):.1f}%\n  "
@@ -198,7 +205,7 @@ class DeepSeekAnalyzer:
         stop_loss = fund_info.get('stop_loss', -20)  # 默认-20%
         current_profit_loss = fund_info.get('current_profit_loss', 0)  # 当前盈亏
         
-        prompt = f"""你是一位专业的基金投资分析师。请严格遵循以下三层递进式逻辑，对基金进行深度分析并给出操作建议。
+        prompt = f"""你是纯粹的数据分析系统。请严格遵循以下三层递进式逻辑，基于数据对基金进行分析并输出操作建议。
 
 ## 用户设定参数
 - 个人止损线: {stop_loss}%
@@ -332,7 +339,7 @@ class DeepSeekAnalyzer:
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是一位专业的基金投资分析师，帮助用户分析基金并给出投资建议。请以JSON格式返回分析结果。"
+                    "content": "你是纯粹的数据分析工具，没有感情和立场。只基于提供的基金数据和市场数据进行客观分析，不带有任何情感色彩、鼓励或安慰。输出结构清晰、逻辑严谨、用词中性。"
                 },
                 {
                     "role": "user", 
@@ -340,7 +347,7 @@ class DeepSeekAnalyzer:
                 }
             ],
             "temperature": 0.3,  # 较低温度保证分析稳定性
-            "max_tokens": 2000
+            "max_tokens": 4096
         }
         
         for attempt in range(retry_count):
@@ -349,7 +356,7 @@ class DeepSeekAnalyzer:
                     DEEPSEEK_API_URL,
                     headers=self.headers,
                     json=data,
-                    timeout=30
+                    timeout=120
                 )
                 
                 if response.status_code == 200:
@@ -380,27 +387,70 @@ class DeepSeekAnalyzer:
         raise Exception("API请求失败")
     
     def _parse_ai_response(self, content: str) -> Dict:
-        """解析AI返回的内容"""
+        """解析AI返回的内容（含容错处理）"""
+        # 尝试提取JSON
+        content = content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        
+        content = content.strip()
+        
+        # 尝试直接解析
         try:
-            # 尝试提取JSON
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            elif content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            
-            result = json.loads(content.strip())
+            result = json.loads(content)
             log("[AI解析成功] final_advice=" + str(result.get('final_advice','N/A')) + ", decision_reason_lens=" + str(len(result.get('decision_reason',''))))
             return result
-        except json.JSONDecodeError as e:
-            log("JSON解析失败: " + str(e) + ", 内容: " + content[:300])
-            raise Exception("AI返回格式错误")
+        except json.JSONDecodeError:
+            pass
+        
+        # 容错处理：修复常见JSON格式问题（截断）
+        # 尝试补全截断的JSON
+        fixed_content = content
+        for brace in ['}', ']']:
+            if fixed_content.count('{') > fixed_content.count('}'):
+                fixed_content += brace
+            if fixed_content.count('[') > fixed_content.count(']'):
+                fixed_content += brace
+        
+        # 去掉末尾被截断的字符串/字段
+        import re
+        fixed_content = re.sub(r'"[^"]*$', '"', fixed_content)
+        fixed_content = re.sub(r',\s*"[^"]*"\s*:\s*$', '', fixed_content)
+        
+        try:
+            result = json.loads(fixed_content)
+            log("[AI解析成功(容错)] final_advice=" + str(result.get('final_advice','N/A')))
+            return result
+        except json.JSONDecodeError:
+            pass
+        
+        log("JSON解析失败, 内容: " + content[:300])
+        raise Exception("AI返回格式错误（AI输出被截断或格式异常）")
     
-    def _generate_fallback_analysis(self, fund_info: Dict, holdings: List[Dict]) -> Dict:
+    def _generate_fallback_analysis(self, fund_info: Dict, holdings: List[Dict], error_msg: str = "") -> Dict:
         """生成降级分析结果（当API不可用时）"""
         log("使用降级分析方案...")
+        
+        # 生成更准确的问题描述
+        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+            issue_desc = "请求超时（提示词过长或网络延迟）"
+            action_msg = "已增加超时时间至120秒，请重试。"
+        elif "balance" in error_msg.lower() or "insufficient" in error_msg.lower():
+            issue_desc = "API余额不足"
+            action_msg = "建议前往 https://platform.deepseek.com 充值API余额。"
+        elif "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower() or "401" in error_msg:
+            issue_desc = "API密钥无效"
+            action_msg = "请检查API密钥是否正确。"
+        elif error_msg:
+            issue_desc = f"AI服务暂时不可用：{error_msg}"
+            action_msg = "请稍后重试。"
+        else:
+            issue_desc = "AI服务暂时不可用"
+            action_msg = "请稍后重试。"
         
         # 基于基金数据生成简单分析
         fund_name = fund_info.get('name', 'N/A')
@@ -430,7 +480,7 @@ class DeepSeekAnalyzer:
             },
             "quality_assessment": {
                 "rating": "良好",
-                "quantitative_score": "由于AI服务暂不可用，无法获取完整数据",
+                "quantitative_score": f"由于{issue_desc}，无法获取完整数据",
                 "qualitative_score": "基于持仓数据的基本分析",
                 "peer_rank_1y": "暂无数据",
                 "peer_rank_2y": "暂无数据"
@@ -441,18 +491,18 @@ class DeepSeekAnalyzer:
                 "industry_outlook": f"基金{fund_name}持仓包含{holdings_count}只股票。{holdings_text}",
                 "market_outlook": "建议密切关注市场走势和相关政策变化。"
             },
-            "decision_reason": f"由于DeepSeek API服务暂时不可用（余额不足），当前显示的是基于规则的基础分析。\n\n基金{fund_name}当前净值为{nav}，持仓包含{holdings_count}只股票。{'当前盈亏' + str(round(profit_loss, 2)) + '%。' if profit_loss else ''}\n\n建议前往 https://platform.deepseek.com 充值API余额以获得更准确的AI分析。",
-            "action_plan": f"当前状态：持有观望。建议充值DeepSeek API后重新使用AI分析功能，获取包含三层递进式决策的详细投资建议。",
+            "decision_reason": f"由于{issue_desc}，当前显示的是基于规则的基础分析。\n\n基金{fund_name}当前净值为{nav}，持仓包含{holdings_count}只股票。{'当前盈亏' + str(round(profit_loss, 2)) + '%。' if profit_loss else ''}\n\n{action_msg}",
+            "action_plan": f"当前状态：持有观望。{action_msg}",
             "confidence": 0.3,
             "suitable_investors": "所有类型的投资者",
             "tips": [
                 "建议定投方式参与，降低择时风险",
                 "关注基金经理历史业绩和投资风格变化",
                 "分散投资，不要把所有资金放在一只基金上",
-                "前往 https://platform.deepseek.com 充值API后获得更精准分析"
+                f"[提示] {issue_desc}。{action_msg}"
             ],
             "fallback": True,
-            "message": "⚠️ AI服务余额不足，当前显示基础分析。请前往 DeepSeek 平台充值后重试。"
+            "message": f"[注意] {issue_desc}，当前显示基础分析。{action_msg}"
         }
     
     def chat_about_fund(self, question: str, fund_info: Union[Dict, List], holdings: List[Dict]) -> Dict:
@@ -486,7 +536,7 @@ class DeepSeekAnalyzer:
                 if tops: line += f", 重仓={tops}"
                 fund_lines.append(line)
             
-            prompt = f"""你是一位专业的基金投资顾问。请对比分析以下多只基金的信息，回答用户的问题。
+            prompt = f"""以下是用户持有的多只基金数据，请基于数据给出客观分析。
 
 ## 多只基金信息
 {chr(10).join(fund_lines)}
@@ -494,12 +544,7 @@ class DeepSeekAnalyzer:
 ## 用户问题
 {question}
 
-请从以下角度分析（如适用）：
-1. 各基金特点对比（收益、风险、持仓）
-2. 哪只基金更适合什么场景
-3. 组合整体的分散度评估
-4. 具体建议
-"""
+请基于数据客观分析基金的特点、收益风险、组合配置合理性，给出冷静的评估结论。"""
         else:
             # 单基金模式（原有逻辑）
             fund_name = fund_info.get('name', 'N/A')
@@ -509,10 +554,10 @@ class DeepSeekAnalyzer:
             
             holdings_text = ""
             if holdings:
-                for h in holdings[:8]:
+                for h in holdings:
                     holdings_text += f"- {h.get('name', 'N/A')}({h.get('code', 'N/A')}): 占比{h.get('ratio', 'N/A')}\n"
             
-            prompt = f"""你是一位专业的基金投资顾问。请基于以下基金信息，回答用户的问题。
+            prompt = f"""以下是基金的数据信息，请基于数据给出客观分析结果。
 
 ## 基金基本信息
 - 名称: {fund_name}({fund_code})
@@ -522,30 +567,29 @@ class DeepSeekAnalyzer:
 - 基金类型: {fund_info.get('fund_type', '未知')}
 - 基金规模: {fund_info.get('scale', '未知')}
 
-## 前十大持仓（部分）
+## 全部持仓股票
 {holdings_text if holdings_text else "暂无数据"}
 
 ## 用户问题
 {question}
 
-
-请以专业、易懂的方式回答，控制在300字以内。"""
+请客观冷静地分析，基于数据给出结论。"""
         
         try:
             if not self.api_key:
                 raise Exception("DeepSeek API密钥未配置")
             
             data = {
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-pro",
                 "messages": [
-                    {"role": "system", "content": "你是一位专业的基金投资顾问，回答要简洁、专业、易懂。"},
+                    {"role": "system", "content": "你是客观冷静的数据分析工具。只基于提供的基金数据进行计算和逻辑推理，输出简洁、中性、不带任何情感色彩。"},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.5,
+                "temperature": 0.7,
                 "max_tokens": 1500
             }
             
-            response = requests.post(DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=30)
+            response = requests.post(DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=120)
             
             if response.status_code == 200:
                 result = response.json()
@@ -565,16 +609,16 @@ class DeepSeekAnalyzer:
                 raise Exception("DeepSeek API密钥未配置")
 
             data = {
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-pro",
                 "messages": [
-                    {"role": "system", "content": "你是一位专业的基金投资顾问，回答要简洁、专业、易懂。"},
+                    {"role": "system", "content": "你是客观冷静的数据分析工具。只基于提供的基金数据进行计算和逻辑推理，输出简洁、中性、不带任何情感色彩。"},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.5,
+                "temperature": 0.7,
                 "max_tokens": 2000
             }
 
-            response = requests.post(DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=30)
+            response = requests.post(DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=120)
 
             if response.status_code == 200:
                 result = response.json()

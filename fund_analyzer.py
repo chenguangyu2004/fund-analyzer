@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import json
 import re
 import traceback
+import time
 
 class FundAnalyzer:
     """基金分析类"""
@@ -14,12 +15,15 @@ class FundAnalyzer:
         self.fund_data = None
         self.session = requests.Session()
 
-    def get_fund_info(self):
-        """获取基金基本信息和净值数据"""
+    def get_fund_info(self, holdings=None):
+        """获取基金基本信息和净值数据
+        Args:
+            holdings: 可选，持仓数据（用于实时估值计算）
+        """
         try:
             # 同时获取官方净值和实时估算净值
             official_data = self._get_official_net_value()
-            realtime_data = self._get_realtime_estimate()
+            realtime_data = self._get_realtime_estimate(holdings)
 
             if not official_data:
                 print("无法获取官方净值数据")
@@ -189,117 +193,127 @@ class FundAnalyzer:
         return rates
 
     def _get_official_net_value(self):
-        """获取官方净值数据"""
+        """获取官方净值数据（支持 QDII 等特殊基金）"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
+            'Referer': 'http://fund.eastmoney.com/'
+        }
+        fund_name = None
+        net_value = 0
+        accumulated_value = 0
+        nav_date = '未知'
+        
+        # 方法1: 从天天基金网 jjjz 页面获取
         try:
-            # 从天天基金网获取官方净值数据
             url = f"http://fundf10.eastmoney.com/jjjz_{self.fund_code}.html"
-            print(f"正在请求官方数据: {url}")
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
-                'Referer': 'http://fund.eastmoney.com/'
-            }
+            print(f"[官方净值] 方法1: {url}")
             response = requests.get(url, headers=headers, timeout=10)
             response.encoding = 'utf-8'
-            print(f"天天基金响应状态: {response.status_code}")
-
-            if response.status_code != 200:
-                return None
-
-            # 从HTML中提取JSON数据 - 尝试多种格式的基金名称
-            fund_name = None
-            name_patterns = [
-                r'"SHORTNAME":"([^"]+)"',
-                r'"name":"([^"]+)"',
-                r'"NAME":"([^"]+)"',
-                r'"fundName":"([^"]+)"',
-                r'"FUNDNAME":"([^"]+)"'
-            ]
-
-            for pattern in name_patterns:
-                name_match = re.search(pattern, response.text)
-                if name_match:
-                    fund_name = name_match.group(1)
-                    break
-
-            # 如果还是没找到，尝试从页面标题中获取
-            if not fund_name:
-                title_match = re.search(r'<title>([^<]+?)_基金历史净值_', response.text)
-                if title_match:
-                    fund_name = title_match.group(1).strip()
-                else:
-                    title_match = re.search(r'<title>([^<]+)</title>', response.text)
+            
+            if response.status_code == 200:
+                # 提取基金名称
+                name_patterns = [
+                    r'"SHORTNAME":"([^"]+)"', r'"name":"([^"]+)"',
+                    r'"NAME":"([^"]+)"', r'"fundName":"([^"]+)"',
+                    r'"FUNDNAME":"([^"]+)"'
+                ]
+                for pattern in name_patterns:
+                    name_match = re.search(pattern, response.text)
+                    if name_match:
+                        fund_name = name_match.group(1)
+                        break
+                
+                if not fund_name:
+                    title_match = re.search(r'<title>([^<]+?)_基金历史净值_', response.text)
                     if title_match:
-                        title_text = title_match.group(1)
-                        # 清理标题文本
-                        fund_name = title_text.replace('基金详情', '').replace('基金历史净值', '').replace('_基金档案_', '').replace('_天天基金网', '').strip()
-                        # 移除括号内的代码
-                        fund_name = re.sub(r'\(\d{6}\)', '', fund_name).strip()
-
-            net_value_match = re.search(r'"dwjz":"([\d.]+)"', response.text)
-            accumulated_match = re.search(r'"ljjz":"([\d.]+)"', response.text)
-            date_match = re.search(r'"jzrq":"(\d{8})"', response.text)
-
-            print(f"净值匹配: name={name_match}, net={net_value_match}, acc={accumulated_match}, date={date_match}")
-
-            nav_date = '未知'
-            if date_match:
-                date_str = date_match.group(1)
-                nav_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-
-            net_value = float(net_value_match.group(1)) if net_value_match else 0
-            accumulated_value = float(accumulated_match.group(1)) if accumulated_match else net_value
-
-            # 如果没有找到净值数据，尝试从实时API获取
-            if net_value == 0:
-                try:
-                    realtime_url = f"http://fundgz.1234567.com.cn/js/{self.fund_code}.js"
-                    r = requests.get(realtime_url, headers=headers, timeout=5)
-                    if r.status_code == 200:
-                        json_str = r.text.strip()
-                        if json_str.startswith('jsonpgz('):
-                            json_str = json_str[8:-2]
-                        data = json.loads(json_str)
-                        net_value = float(data.get('dwjz', 0))
-                        accumulated_value = net_value  # 如果没有累计净值，使用单位净值
-                        print(f"从实时API获取到净值: {net_value}")
-                except:
-                    pass
-
-            print(f"解析结果: 净值={net_value}, 累计={accumulated_value}, 日期={nav_date}, 名称={fund_name}")
-
-            if net_value == 0:
-                print("警告: 无法获取官方净值数据")
-                return None
-
-            # 清理基金名称
-            if fund_name:
-                fund_name = fund_name.replace('_ 基金档案 _ 天天基金网', '')
-                fund_name = fund_name.replace('_基金档案_', '')
-                fund_name = fund_name.replace('_天天基金网', '')
-                fund_name = fund_name.strip()
-
-            return {
-                'fund_name': fund_name if fund_name else f'基金{self.fund_code}',
-                'net_value': net_value,
-                'accumulated_value': accumulated_value,
-                'day_growth': 0,  # 官方净值没有增长率，从实时数据获取
-                'nav_date': nav_date,
-                'fund_manager': '未知',
-                'org_name': '未知',
-                'fund_type': '未知',
-                'foundation_date': '未知'
-            }
-
+                        fund_name = title_match.group(1).strip()
+                    else:
+                        title_match = re.search(r'<title>([^<]+)</title>', response.text)
+                        if title_match:
+                            fund_name = re.sub(r'\(\d{6}\)', '', title_match.group(1).replace('_', '').replace('基金详情', '').replace('天天基金网', '')).strip()
+                
+                # 提取净值
+                net_value_match = re.search(r'"dwjz":"([\d.]+)"', response.text)
+                accumulated_match = re.search(r'"ljjz":"([\d.]+)"', response.text)
+                date_match = re.search(r'"jzrq":"(\d{8})"', response.text)
+                
+                if net_value_match:
+                    net_value = float(net_value_match.group(1))
+                    accumulated_value = float(accumulated_match.group(1)) if accumulated_match else net_value
+                    if date_match:
+                        date_str = date_match.group(1)
+                        nav_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
         except Exception as e:
-            print(f"获取官方净值失败: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[官方净值] 方法1失败: {e}")
+        
+        # 方法2: 通过 fundgz 实时API获取
+        if net_value <= 0:
+            try:
+                url2 = f"http://fundgz.1234567.com.cn/js/{self.fund_code}.js"
+                print(f"[官方净值] 方法2(fundgz): {url2}")
+                r = requests.get(url2, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    json_str = r.text.strip()
+                    if json_str.startswith('jsonpgz(') and json_str.endswith(');'):
+                        json_str = json_str[8:-2]
+                    data = json.loads(json_str)
+                    net_value = float(data.get('dwjz', 0))
+                    accumulated_value = net_value
+                    if data.get('gztime'):
+                        nav_date = data['gztime'][:10]
+                    print(f"[官方净值] 方法2成功: 净值={net_value}")
+            except Exception as e:
+                print(f"[官方净值] 方法2失败: {e}")
+        
+        # 方法3: 使用东方财富API
+        if net_value <= 0:
+            try:
+                url3 = f"https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?pageIndex=1&pageSize=3&plat=Android&product=EFund&Version=1&Fcodes={self.fund_code}"
+                print(f"[官方净值] 方法3(东方财富API): {url3}")
+                r = requests.get(url3, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data and data.get('Datas') and len(data['Datas']) > 0:
+                        item = data['Datas'][0]
+                        net_value = float(item.get('NAV', 0))
+                        accumulated_value = float(item.get('NAV', 0))
+                        nav_date = item.get('PDATE', '未知')
+                        fund_name = item.get('SHORTNAME', fund_name)
+                        print(f"[官方净值] 方法3成功: 净值={net_value}, 名称={fund_name}")
+            except Exception as e:
+                print(f"[官方净值] 方法3失败: {e}")
+        
+        print(f"[官方净值] 最终结果: 净值={net_value}, 日期={nav_date}, 名称={fund_name}")
+        
+        if net_value <= 0:
+            print("[官方净值] 所有方法均失败")
             return None
+        
+        if fund_name:
+            fund_name = fund_name.replace('_ 基金档案 _ 天天基金网', '').replace('_基金档案_', '').replace('_天天基金网', '').strip()
+        
+        return {
+            'fund_name': fund_name if fund_name else f'基金{self.fund_code}',
+            'net_value': net_value,
+            'accumulated_value': accumulated_value,
+            'day_growth': 0,
+            'nav_date': nav_date,
+            'fund_manager': '未知',
+            'org_name': '未知',
+            'fund_type': '未知',
+            'foundation_date': '未知'
+        }
 
-    def _get_realtime_estimate(self):
-        """获取实时估算净值（基于股票持仓）"""
+
+
+    def _get_realtime_estimate(self, holdings=None):
+        """获取实时估算净值（基于股票持仓）
+        优先使用天天基金接口，同时使用持仓股票计算作为备用
+        """
+        result = None
+        
+        # 方法1: 从天天基金获取实时估算
         try:
-            # 尝试从天天基金获取实时估算
             url = f"http://fundgz.1234567.com.cn/js/{self.fund_code}.js"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
@@ -310,14 +324,71 @@ class FundAnalyzer:
                 json_str = response.text.strip()
                 if json_str.startswith('jsonpgz(') and json_str.endswith(');'):
                     json_str = json_str[8:-2]
-
                 data = json.loads(json_str)
-                return {
-                    'estimated_value': float(data.get('gsz', 0)),
-                    'estimated_growth': float(data.get('gszzl', 0))
-                }
+                gsz = float(data.get('gsz', 0))
+                gszzl = float(data.get('gszzl', 0))
+                if gsz > 0:
+                    result = {
+                        'estimated_value': gsz,
+                        'estimated_growth': gszzl
+                    }
+                    print(f"[实时估值] 天天基金接口成功: 估值{gsz}, 涨跌{gszzl}%")
         except Exception as e:
-            print(f"获取实时估算失败: {e}")
+            print(f"[实时估值] 天天基金接口失败: {e}")
+        
+        # 方法2: 如果天天基金接口失败但有持仓数据，自己计算
+        if result is None and holdings and len(holdings) > 0:
+            try:
+                result = self._calc_value_from_holdings(holdings)
+            except Exception as e:
+                print(f"[实时估值] 持仓计算失败: {e}")
+        
+        return result
+
+    def _calc_value_from_holdings(self, holdings):
+        """基于持仓股票实时价格计算基金估值"""
+        # 获取最新官方净值作为基准
+        official_data = self._get_official_net_value()
+        if not official_data:
+            return None
+        
+        official_nav = float(official_data.get('net_value', 0))
+        if official_nav <= 0:
+            return None
+        
+        # 提取持仓股票的实时价格
+        total_weight = 0.0
+        weighted_change = 0.0
+        
+        for h in holdings:
+            ratio_str = h.get('ratio', '0%').replace('%', '').strip()
+            try:
+                ratio = float(ratio_str) / 100.0  # 转换为小数
+            except ValueError:
+                ratio = 0.0
+            
+            # 如果已经获取了实时价格和涨跌幅
+            change_pct = h.get('change_pct')
+            if change_pct is not None:
+                weighted_change += ratio * (1 + change_pct / 100.0)
+                total_weight += ratio
+        
+        # 如果成功获取了部分股票价格
+        if total_weight > 0.01:
+            # 加权平均价格比率（已获实时价格的持仓）
+            avg_price_ratio = weighted_change / total_weight
+            
+            # 剩余未获取实时价格的持仓，假设与大盘（沪深300）同步，涨跌为0
+            # 使用已获取股票的平均涨跌幅作为参考
+            estimated_nav = official_nav * avg_price_ratio
+            estimated_change = (estimated_nav - official_nav) / official_nav * 100 if official_nav > 0 else 0
+            
+            print(f"[实时估值] 持仓计算成功: 官方净值{official_nav}, 估算{estimated_nav:.4f}, 涨跌{estimated_change:.2f}%, 覆盖率{total_weight*100:.1f}%")
+            return {
+                'estimated_value': round(estimated_nav, 4),
+                'estimated_growth': round(estimated_change, 2)
+            }
+        
         return None
 
     def get_fund_history(self, days=30):
@@ -386,336 +457,515 @@ class FundAnalyzer:
             return None
 
     def _get_fund_holdings(self, top=10):
-        """获取基金前十大持仓股票及实时行情"""
+        """获取基金前十大持仓（支持所有基金类型：A股/QDII/港股/美股）"""
+        print(f"[持仓] 开始获取 {self.fund_code} 的持仓数据...")
+        
+        # 方法1: 天天基金网（A股基金）
+        holdings = self._fetch_holdings_eastmoney(top)
+        
+        # 方法4: QDII基金专用（港股持仓）
+        if not holdings or len(holdings) == 0:
+            print("[持仓] 方法1失败，尝试QDII港股持仓接口...")
+            holdings = self._fetch_holdings_qdii(top)
+        
+        # 方法2: 东方财富网（QDII/港股通基金备用）
+        if not holdings or len(holdings) == 0:
+            print("[持仓] 方法1/4失败，尝试东方财富...")
+            holdings = self._fetch_holdings_eastmoney2(top)
+        
+        # 方法3: 雪球/好买基金（备用）
+        if not holdings or len(holdings) == 0:
+            print("[持仓] 方法2失败，尝试基金公司官网/天天基金APP接口...")
+            holdings = self._fetch_holdings_xueqiu(top)
+        
+        if not holdings or len(holdings) == 0:
+            print(f"[持仓] 所有方法均无法获取持仓数据")
+            return []
+        
+        print(f"[持仓] OK 共获取 {len(holdings)} 条持仓记录")
+        
+        # 批量获取股票实时价格（爬取腾讯/新浪/网易）
+        if holdings:
+            self._get_stock_prices(holdings)
+            # 打印价格获取结果
+            success = sum(1 for h in holdings if h.get('price') is not None)
+            print(f"[持仓] 价格获取: {success}/{len(holdings)} 成功")
+        
+        return holdings
+
+    def _fetch_holdings_eastmoney(self, top=10):
+        """方法1: 天天基金网（支持A股+港股/QDII持仓）"""
         try:
-            print("[持仓] 开始获取...", flush=True)
-            import os
-            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'debug.log')
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write("[持仓] 开始获取...\n")
-            # 从天天基金网获取持仓数据
-            url = f"http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={self.fund_code}&topline={top}&rt=0.1234567"
-            print(f"[持仓] 请求: {url}")
-            
+            # top=0 表示获取全部持仓（最多50只）
+            actual_top = top if top > 0 else 50
+            url = f"http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={self.fund_code}&topline={actual_top}&rt={time.time()}"
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'http://fund.eastmoney.com/'
             }
+            print(f"[持仓·方法1] 请求: {url}")
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return []
             
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            # 提取content字段
-            content_match = re.search(r'content:"(.*?)",', response.text, re.DOTALL)
+            content_match = re.search(r'content:"(.*?)",', resp.text, re.DOTALL)
             if not content_match:
-                print("[持仓] 未找到content字段")
                 return []
             
-            html_content = content_match.group(1).replace('\\"', '"')
-            
-            # 提取每一行
-            tbody_match = re.search(r'<tbody>(.*?)</tbody>', html_content, re.DOTALL)
+            html = content_match.group(1).replace('\\"', '"')
+            tbody_match = re.search(r'<tbody>(.*?)</tbody>', html, re.DOTALL)
             if not tbody_match:
-                print("[持仓] 未找到tbody")
                 return []
-            
-            tbody = tbody_match.group(1)
-            rows = re.findall(r'<tr>.*?</tr>', tbody, re.DOTALL)
             
             holdings = []
+            rows = re.findall(r'<tr>.*?</tr>', tbody_match.group(1), re.DOTALL)
             for row in rows:
-                # 提取序号
-                seq_match = re.search(r'<td>(\d+)</td>', row)
-                seq = seq_match.group(1) if seq_match else ''
-                
-                # 提取股票代码
-                code_match = re.search(r'<td><a[^>]*>(\d+)</a></td>', row)
-                code = code_match.group(1) if code_match else ''
-                
-                # 提取股票名称
-                name_match = re.search(r'<td[^>]*class=["\']?tol["\']?[^>]*><a[^>]*>([^<]+)</a></td>', row)
-                name = name_match.group(1) if name_match else ''
-                
-                # 提取占比
+                # 提取所有链接文本（排除非股票信息）
+                all_links = re.findall(r'<a[^>]*>([^<]+)</a>', row)
+                # 过滤出有效的股票数据：第一个是代码（纯数字），第二个是名称
+                codes = [l for l in all_links if re.match(r'^\d{5,6}$', l.strip())]
+                names = [l for l in all_links if not re.match(r'^\d+$', l.strip()) and l not in ['股吧', '行情', '变动详情'] and len(l) >= 2]
+                # 比例：从td中提取XX.XX%
                 ratio_match = re.search(r'<td[^>]*>(\d+\.?\d*%)</td>', row)
-                ratio = ratio_match.group(1) if ratio_match else ''
                 
-                if code and name and ratio:
+                if codes and names and ratio_match:
+                    stock_code = codes[0]
+                    stock_name = names[0]
                     holdings.append({
-                        'seq': seq,
-                        'code': code,
-                        'name': name,
-                        'ratio': ratio,
-                        'price': None,  # 稍后获取实时价格
-                        'change': None,  # 稍后获取涨跌幅
+                        'seq': str(len(holdings)+1),
+                        'code': stock_code,
+                        'name': stock_name,
+                        'ratio': ratio_match.group(1),
+                        'price': None,
+                        'change': None,
                         'change_pct': None
                     })
-            
-            print(f"[持仓] 找到 {len(holdings)} 条持仓记录")
-            
-            # 批量获取股票实时价格
             if holdings:
-                self._get_stock_prices(holdings)
-            
+                print(f"[持仓·方法1] OK 获取到 {len(holdings)} 条持仓")
+                for h in holdings[:3]:
+                    print(f"  {h['name']} ({h['code']}) - {h['ratio']}")
             return holdings
-        
         except Exception as e:
-            print(f"[持仓] 获取失败: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[持仓·方法1] 失败: {e}")
+            return []
+
+    def _fetch_holdings_eastmoney2(self, top=10):
+        """方法2: 东方财富网（支持QDII/指数基金）"""
+        try:
+            # 东方财富基金持仓接口（新版）
+            url = f"https://fundmobapi.eastmoney.com/FundMNewApi/FundMNHold?FCODE={self.fund_code}&MobileKey=&deviceid=&plat=Iphone&product=EFund&version=1&dateType=INCLUDE&showType=SZ&pageIndex=1&pageSize={top}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)',
+                'Referer': 'https://fund.eastmoney.com/'
+            }
+            print(f"[持仓·方法2] 请求东方财富: {url[:80]}")
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                holdings = []
+                if data.get('Datas') and isinstance(data['Datas'], list):
+                    for item in data['Datas']:
+                        code = str(item.get('ZQDM', item.get('GPDM', ''))).strip()
+                        name = str(item.get('ZQMC', item.get('GPJC', ''))).strip()
+                        ratio = str(item.get('JZBL', item.get('PCCG', ''))).strip()
+                        if code and name:
+                            holdings.append({
+                                'seq': str(len(holdings)+1),
+                                'code': code,
+                                'name': name,
+                                'ratio': ratio + '%' if ratio and '%' not in ratio else ratio,
+                                'price': None,
+                                'change': None,
+                                'change_pct': None
+                            })
+                    print(f"[持仓·方法2] 获取到 {len(holdings)} 条")
+                    return holdings
+            return []
+        except Exception as e:
+            print(f"[持仓·方法2] 失败: {e}")
+            return []
+
+    def _fetch_holdings_xueqiu(self, top=10):
+        """方法3: 雪球/天天基金组合（备用）"""
+        try:
+            # 尝试天天基金网另一个接口
+            url = f"https://fundf10.eastmoney.com/jjcc_{self.fund_code}.html"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': f'http://fundf10.eastmoney.com/jjcc_{self.fund_code}.html'
+            }
+            print(f"[持仓·方法3] 请求: {url}")
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.encoding = 'utf-8'
+            if resp.status_code == 200:
+                # 尝试从页面脚本中提取JSON数据
+                json_match = re.search(r'var\s+data\s*=\s*(\[.*?\]);', resp.text, re.DOTALL)
+                if json_match:
+                    import json
+                    data = json.loads(json_match.group(1))
+                    holdings = []
+                    for item in data[:top]:
+                        code = str(item.get('stockcode', item.get('code', '')))
+                        name = str(item.get('stockname', item.get('name', '')))
+                        ratio = str(item.get('ratio', item.get('jjsz', '')))
+                        if code and name:
+                            holdings.append({
+                                'seq': str(len(holdings)+1),
+                                'code': code,
+                                'name': name,
+                                'ratio': ratio + '%' if ratio and '%' not in ratio else ratio,
+                                'price': None,
+                                'change': None,
+                                'change_pct': None
+                            })
+                    print(f"[持仓·方法3] 获取到 {len(holdings)} 条")
+                    return holdings
+            return []
+        except Exception as e:
+            print(f"[持仓·方法3] 失败: {e}")
+            return []
+
+    def _fetch_holdings_qdii(self, top=10):
+        """方法4: QDII基金专用（港股持仓）"""
+        try:
+            # 使用天天基金网的港股持仓接口
+            url = f"http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=hkcc&code={self.fund_code}&topline={top}&rt={time.time()}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'http://fundf10.eastmoney.com/'
+            }
+            print(f"[持仓·方法4-QDII] 请求港股持仓: {url[:80]}")
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                content_match = re.search(r'content:"(.*?)",', resp.text, re.DOTALL)
+                if content_match:
+                    html = content_match.group(1).replace('\\"', '"')
+                    tbody_match = re.search(r'<tbody>(.*?)</tbody>', html, re.DOTALL)
+                    if tbody_match:
+                        holdings = []
+                        rows = re.findall(r'<tr>.*?</tr>', tbody_match.group(1), re.DOTALL)
+                        for row in rows:
+                            # 港股代码通常是5位数字
+                            code_match = re.search(r'<td><a[^>]*>(\d{5})</a>', row)
+                            name_match = re.search(r'class="[^"]*tol[^"]*"[^>]*><a[^>]*>([^<]+)</a>', row)
+                            ratio_match = re.search(r'<td[^>]*>(\d+\.?\d*%)</td>', row)
+                            
+                            if code_match and name_match and ratio_match:
+                                holdings.append({
+                                    'seq': str(len(holdings)+1),
+                                    'code': code_match.group(1),
+                                    'name': name_match.group(1).strip(),
+                                    'ratio': ratio_match.group(1),
+                                    'price': None,
+                                    'change': None,
+                                    'change_pct': None
+                                })
+                        if holdings:
+                            print(f"[持仓·方法4-QDII] 获取到 {len(holdings)} 条港股持仓")
+                            return holdings
+            return []
+        except Exception as e:
+            print(f"[持仓·方法4-QDII] 失败: {e}")
             return []
     
     def _get_stock_prices(self, holdings):
-        """批量获取股票实时价格"""
-        # 尝试多种方法突破反爬虫限制
-        print(f"[持仓] 开始获取实时价格...", flush=True)
+        """批量获取所有持仓股票实时价格（腾讯财经+新浪财经+网易财经，一定要成功）"""
+        print(f"[持仓] 开始获取 {len(holdings)} 只股票实时价格...")
+        
+        # 收集所有需要获取的代码，构建映射
+        code_map = {}
+        for idx, h in enumerate(holdings):
+            code_map[h['code']] = idx
+        
+        # 方法1：腾讯财经API（主要方式，支持A股+港股+北交所）
+        success = self._fetch_tencent_prices(holdings, code_map)
+        s1 = sum(1 for h in holdings if h.get('price') is not None)
+        print(f"[持仓] 腾讯API完成: {s1}/{len(holdings)} 只股票有价格")
+        
+        # 方法2：新浪财经API（备用）
+        if s1 < len(holdings):
+            print("[持仓] 腾讯API不完整，尝试新浪财经...")
+            self._fetch_sina_prices(holdings, code_map)
+            s2 = sum(1 for h in holdings if h.get('price') is not None)
+            print(f"[持仓] 新浪API完成: {s2}/{len(holdings)} 只股票有价格")
+        
+        # 方法3：网易财经API（备用）
+        if s1 < len(holdings):
+            print("[持仓] 新浪API不完整，尝试网易财经...")
+            self._fetch_163_prices(holdings, code_map)
+            s3 = sum(1 for h in holdings if h.get('price') is not None)
+            print(f"[持仓] 网易API完成: {s3}/{len(holdings)} 只股票有价格")
+        
+        final = sum(1 for h in holdings if h.get('price') is not None)
+        print(f"[持仓] 所有方法完成: {final}/{len(holdings)} 只股票有价格")
 
-        # 尝试方法1: 使用session池和随机延迟
-        if self._try_session_pool(holdings):
-            return
-
-        # 尝试方法2: 使用备用API
-        if self._try_backup_apis(holdings):
-            return
-
-        # 如果都失败，则跳过
-        print(f"[持仓] 所有方法均失败，跳过实时价格获取", flush=True)
-        return
-
-    def _try_session_pool(self, holdings):
-        """使用session池和随机延迟尝试获取价格"""
+    def _fetch_tencent_prices(self, holdings, code_map):
+        """腾讯财经API获取股票价格（支持A股+港股+美股+北交所）"""
         try:
-            import random
-            import time
-
+            import random, time
+            
+            # 构建腾讯API代码列表
+            tencent_codes = []
+            valid_codes = []
+            for code in code_map.keys():
+                if len(code) == 5:  # 港股
+                    tc = f'hk{code}'
+                elif code.startswith('6'):
+                    tc = f'sh{code}'
+                elif code.startswith(('0', '3')):
+                    tc = f'sz{code}'
+                elif code.startswith(('4', '8', '9')):  # 北交所
+                    tc = f'bj{code}'
+                else:
+                    continue
+                tencent_codes.append(tc)
+                valid_codes.append(code)
+            
+            if not tencent_codes:
+                return False
+            
+            # 使用Session保持连接
             session = requests.Session()
             session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Connection': 'keep-alive',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://gu.qq.com/'
             })
-
+            
             success_count = 0
-
-            # 分批获取，每批3只股票，随机延迟
-            for i in range(0, len(holdings), 3):
-                batch = holdings[i:i+3]
-                code_map = {}
-
-                for h in batch:
-                    code = h['code']
-                    code_map[code] = holdings.index(h)
-
-                if code_map:
-                    try:
-                        # 使用腾讯财经API (这个API对批量查询更友好)
-                        tencent_codes = []
-                        beijing_codes = []  # 北交所股票单独处理
-                        hk_codes = []  # 港股单独处理
-
-                        for code in code_map.keys():
-                            # 先判断是否为港股（5位代码）
-                            if len(code) == 5:
-                                # 港股（5位数字）
-                                hk_codes.append(code)
-                            elif code.startswith('6'):
-                                tencent_codes.append(f'sh{code}')
-                            elif code.startswith('0') or code.startswith('3'):
-                                tencent_codes.append(f'sz{code}')
-                            elif code.startswith('8') or code.startswith('4') or code.startswith('9'):
-                                # 北交所股票，腾讯API不支持，尝试其他方式
-                                beijing_codes.append(code)
-
-                        codes_str = ','.join(tencent_codes)
-                        url = f'http://qt.gtimg.cn/q={codes_str}'
-
-                        print(f"[持仓] 请求腾讯API: {len(tencent_codes)} 只股票")
-                        response = session.get(url, timeout=5)
-                        response.encoding = 'utf-8'
-
-                        if response.status_code == 200:
-                            # 腾讯API返回格式: v_sh600519="..." 或 var hq_str_sh600519="..."
-                            # 尝试多种匹配模式
-                            patterns = [
-                                r'v_(\w{2}\d+?)="([^"]+)"',  # v_sh600519="..."
-                                r'var hq_str_(\w+?)="([^"]+)"'  # var hq_str_sh600519="..."
-                            ]
-
-                            for pattern in patterns:
-                                matches = re.findall(pattern, response.text)
-                                for market_code, data_str in matches:
-                                    if data_str and '~' in data_str:
-                                        # 腾讯API用~分隔数据
-                                        parts = data_str.split('~')
-                                        # 提取股票代码 (去掉市场前缀)
-                                        stock_code = market_code[2:] if len(market_code) > 2 and market_code[:2] in ['sh', 'sz'] else market_code
-
-                                        # 腾讯API字段索引 (可能需要调整):
-                                        # 1=名称, 2=代码, 3=当前价, 4=昨收, ...
-                                        if len(parts) > 3 and stock_code in code_map:
-                                            try:
-                                                price = float(parts[3]) if parts[3] else 0
-                                                prev_close = float(parts[4]) if parts[4] else price
-
-                                                if price > 0:
-                                                    idx = code_map[stock_code]
-                                                    change = price - prev_close
-                                                    change_pct = (change / prev_close * 100) if prev_close > 0 else 0
-
-                                                    holdings[idx]['price'] = price
-                                                    holdings[idx]['change'] = change
-                                                    holdings[idx]['change_pct'] = change_pct
-                                                    print(f"[持仓] ✓ {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
-                                            except (ValueError, IndexError):
-                                                continue
-
-                        # 尝试获取北交所股票数据（使用东方财富网）
-                        if beijing_codes:
-                            for code in beijing_codes:
-                                try:
-                                    # 东方财富北交所API - 使用不同的secid格式
-                                    url = f'http://push2.eastmoney.com/api/qt/stock/get?secid=0.{code}&fields=f2,f3,f4,f5,f12,f13,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f26,f27,f28,f29,f30,f31,f32,f33,f34,f35,f36,f37,f38,f39,f40,f41,f42,f43,f44,f45,f46,f47,f48,f49,f50,f51,f52,f53,f54,f55,f56,f57,f58,f60,f61,f62,f63,f64,f65,f66,f67,f68,f69,f70,f71,f72,f73,f74,f75,f76,f77,f78,f79,f80,f81,f82,f84,f85,f86,f87,f88,f89,f90,f91,f92,f93,f94,f95,f96,f97,f98,f99,f100,f107,f108,f109,f110,f111,f112,f113,f114,f115,f116,f117,f118,f119,f120,f121,f122,f123,f124,f125,f126,f127,f128,f129,f130,f131,f132,f133,f134,f135,f136,f137,f138,f139,f140,f141,f142,f143,f144,f145,f146,f147,f148,f149,f150,f151,f152,f153,f154,f155,f156,f157,f158,f159,f160,f161,f162,f163,f164,f165,f166,f167,f168,f169,f170,f171,f172,f173,f174,f175,f176,f177,f178,f179,f180,f181,f182,f183,f184,f185,f186,f187,f188,f189,f190,f191,f192,f193,f194,f195,f196,f197,f198,f199,f200,f201,f202,f203,f204,f205,f206,f207,f208,f209,f210,f211,f212,f213,f214,f215,f216,f217,f218,f219,f220,f221,f222,f223,f224,f225,f226,f227,f228,f229,f230,f231,f232,f233,f234,f235,f236,f237,f238,f239,f240,f241,f242,f243,f244,f245,f246,f247,f248,f249,f250,f251,f252,f253,f254,f255,f256,f257,f258,f259,f260,f261,f262,f263,f264,f265,f266,f267,f268,f269,f270,f271,f272,f273,f274,f275,f276,f277,f278,f279,f280,f281,f282,f283,f284,f285,f286,f287,f288,f289,f290,f291,f292,f293,f294,f295,f296,f297,f298,f299,f300'
-                                    response = session.get(url, timeout=3)
-                                    if response.status_code == 200:
-                                        data = response.json()
-                                        if data and 'data' in data and data['data']:
-                                            stock_data = data['data']
-                                            price = stock_data.get('f43', 0)  # 最新价
-                                            prev_close = stock_data.get('f60', 0)  # 昨收价
-                                            if price and price > 0 and code in code_map:
-                                                idx = code_map[code]
-                                                change = price - prev_close
-                                                change_pct = (change / prev_close * 100) if prev_close > 0 else 0
-
-                                                holdings[idx]['price'] = price
-                                                holdings[idx]['change'] = change
-                                                holdings[idx]['change_pct'] = change_pct
-                                                print(f"[持仓] ✓ {code}(北交所): 价格={price}, 涨跌={change_pct:.2f}%")
-                                except Exception as e:
-                                    # 北交所API失败不影响其他股票，继续
-                                    pass
-
-                        # 尝试获取港股数据（使用腾讯或新浪API）
-                        if hk_codes:
-                            # 腾讯API也支持港股，格式：hk代码
-                            tencent_hk_codes = [f'hk{code}' for code in hk_codes]
-                            hk_str = ','.join(tencent_hk_codes)
-
-                            try:
-                                url = f'http://qt.gtimg.cn/q={hk_str}'
-                                print(f"[持仓] 请求腾讯港股API: {len(hk_codes)} 只股票")
-                                response = session.get(url, timeout=5)
-                                response.encoding = 'utf-8'
-
-                                if response.status_code == 200:
-                                    # 港股解析
-                                    pattern = r'v_(hk\d+?)="([^"]+)"'
-                                    matches = re.findall(pattern, response.text)
-
-                                    for market_code, data_str in matches:
-                                        if data_str and '~' in data_str:
-                                            parts = data_str.split('~')
-                                            # 港股代码格式：hk代码，去掉hk前缀
-                                            stock_code = market_code[2:] if len(market_code) > 2 else market_code
-
-                                            # 港股API字段索引可能略有不同
-                                            if len(parts) > 3 and stock_code in code_map:
-                                                try:
-                                                    price = float(parts[3]) if parts[3] else 0
-                                                    prev_close = float(parts[4]) if len(parts) > 4 and parts[4] else price
-
-                                                    if price > 0:
-                                                        idx = code_map[stock_code]
-                                                        change = price - prev_close
-                                                        change_pct = (change / prev_close * 100) if prev_close > 0 else 0
-
-                                                        holdings[idx]['price'] = price
-                                                        holdings[idx]['change'] = change
-                                                        holdings[idx]['change_pct'] = change_pct
-                                                        print(f"[持仓] ✓ {stock_code}(港股): 价格={price}, 涨跌={change_pct:.2f}%")
-                                                except (ValueError, IndexError):
-                                                    continue
-                            except Exception as e:
-                                print(f"[持仓] 港股API请求失败: {e}")
-                                pass
-
-                        # 检查是否获取到了数据
-                        batch_success = sum(1 for h in batch if h['price'] is not None)
-                        success_count += batch_success
-
-                        # 随机延迟避免被封
-                        if i + 3 < len(holdings):
-                            delay = random.uniform(0.3, 0.8)
-                            time.sleep(delay)
-
-                    except Exception as e:
-                        print(f"[持仓] 批量获取失败: {e}")
+            # 分批请求，每批10只
+            for i in range(0, len(tencent_codes), 10):
+                batch = tencent_codes[i:i+10]
+                batch_codes = valid_codes[i:i+10]
+                url = f"http://qt.gtimg.cn/q={','.join(batch)}"
+                
+                try:
+                    resp = session.get(url, timeout=8)
+                    resp.encoding = 'utf-8'
+                    if resp.status_code != 200:
+                        time.sleep(random.uniform(0.2, 0.5))
                         continue
-
-            # 检查最终结果
-            if success_count > 0:
-                print(f"[持仓] 成功获取 {success_count}/{len(holdings)} 只股票价格")
-                return True
-            else:
-                return False
-
+                    
+                    # 解析腾讯API返回
+                    # 格式: var hq_str_sh600000="1~茅台~2000.00~+2.0%~..."
+                    for line in resp.text.split('\n'):
+                        line = line.strip()
+                        if not line or '=' not in line:
+                            continue
+                        eq_idx = line.index('=')
+                        var_name = line[:eq_idx].strip().replace('var ', '').replace('const ', '')
+                        data_str = line[eq_idx+1:].strip().strip('"')
+                        
+                        if not data_str or '~' not in data_str:
+                            continue
+                        
+                        parts = data_str.split('~')
+                        if len(parts) < 5:
+                            continue
+                        
+                        # 从var_name提取股票代码（去掉v_或hq_str_前缀）
+                        raw_code = var_name
+                        for prefix in ['v_', 'hq_str_']:
+                            if raw_code.startswith(prefix):
+                                raw_code = raw_code[len(prefix):]
+                                break
+                        
+                        # 去掉市场前缀获取原始代码
+                        stock_code = raw_code
+                        for p in ['sh', 'sz', 'hk', 'bj']:
+                            if stock_code.startswith(p) and len(stock_code) > len(p):
+                                stock_code = stock_code[len(p):]
+                                break
+                        
+                        if stock_code not in code_map:
+                            continue
+                        
+                        try:
+                            # 腾讯API字段: parts[1]=名称, parts[2]=代码, parts[3]=当前价, parts[4]=昨收
+                            # 港股和A股字段位置不同，统一用公式计算涨跌幅
+                            price = float(parts[3]) if len(parts) > 3 and parts[3] and float(parts[3]) > 0 else 0
+                            prev_close = float(parts[4]) if len(parts) > 4 and parts[4] and float(parts[4]) > 0 else price
+                            
+                            if price > 0 and prev_close > 0:
+                                idx = code_map[stock_code]
+                                change = price - prev_close
+                                change_pct = (change / prev_close) * 100
+                                holdings[idx]['price'] = price
+                                holdings[idx]['change'] = round(change, 4)
+                                holdings[idx]['change_pct'] = round(change_pct, 2)
+                                success_count += 1
+                                print(f"[腾讯] OK {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
+                        except (ValueError, IndexError):
+                            continue
+                    
+                    time.sleep(random.uniform(0.2, 0.5))
+                except Exception as e:
+                    print(f"[腾讯] 批次失败: {e}")
+                    time.sleep(random.uniform(0.3, 0.6))
+                    continue
+            
+            return success_count > 0
         except Exception as e:
-            print(f"[持仓] Session池方法失败: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[腾讯] 整体失败: {e}")
             return False
 
-    def _try_backup_apis(self, holdings):
-        """尝试备用API"""
+    def _fetch_sina_prices(self, holdings, code_map):
+        """新浪财经API获取股票价格"""
         try:
-            # 尝试网易财经API
+            import random, time
+            
+            # 构建新浪API代码列表
+            sina_codes = []
+            valid_codes = []
+            for code in code_map.keys():
+                if len(code) == 5:  # 港股
+                    sc = f'hk{code}'
+                elif code.startswith('6'):
+                    sc = f'sh{code}'
+                elif code.startswith(('0', '3')):
+                    sc = f'sz{code}'
+                else:
+                    continue
+                sina_codes.append(sc)
+                valid_codes.append(code)
+            
+            if not sina_codes:
+                return False
+            
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://finance.sina.com.cn/'
+            })
+            
+            success_count = 0
+            for i in range(0, len(sina_codes), 10):
+                batch = sina_codes[i:i+10]
+                batch_codes = valid_codes[i:i+10]
+                url = f"https://hq.sinajs.cn/list={','.join(batch)}"
+                
+                try:
+                    resp = session.get(url, timeout=8)
+                    resp.encoding = 'gbk'
+                    if resp.status_code != 200:
+                        continue
+                    
+                    for line in resp.text.split('\n'):
+                        line = line.strip()
+                        if '=' not in line:
+                            continue
+                        eq_idx = line.index('=')
+                        var_name = line[:eq_idx].strip()
+                        data_str = line[eq_idx+1:].strip().strip('"').strip("'")
+                        
+                        if not data_str or ',' not in data_str:
+                            continue
+                        
+                        # var_name格式: hq_str_sh600000
+                        raw_code = var_name.replace('hq_str_', '').replace('var ', '').strip()
+                        stock_code = raw_code
+                        for p in ['sh', 'sz', 'hk']:
+                            if stock_code.startswith(p) and len(stock_code) > len(p):
+                                stock_code = stock_code[len(p):]
+                                break
+                        
+                        if stock_code not in code_map:
+                            continue
+                        
+                        try:
+                            # 新浪格式: 名称,今开,昨收,当前价,最高,最低,买价,卖价,成交量,成交额,...
+                            parts = data_str.split(',')
+                            if len(parts) < 4:
+                                continue
+                            price = float(parts[3]) if parts[3] else 0
+                            prev_close = float(parts[2]) if len(parts) > 2 and parts[2] else price
+                            
+                            if price > 0 and prev_close > 0:
+                                idx = code_map[stock_code]
+                                change = price - prev_close
+                                change_pct = (change / prev_close) * 100 if prev_close > 0 else 0
+                                holdings[idx]['price'] = price
+                                holdings[idx]['change'] = change
+                                holdings[idx]['change_pct'] = change_pct
+                                success_count += 1
+                                print(f"[新浪] OK {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
+                        except (ValueError, IndexError):
+                            continue
+                    
+                    time.sleep(random.uniform(0.2, 0.5))
+                except Exception as e:
+                    print(f"[新浪] 批次失败: {e}")
+                    time.sleep(random.uniform(0.3, 0.6))
+                    continue
+            
+            return success_count > 0
+        except Exception as e:
+            print(f"[新浪] 整体失败: {e}")
+            return False
+
+    def _fetch_163_prices(self, holdings, code_map):
+        """网易财经API获取股票价格"""
+        try:
+            import random, time
+            
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://money.163.com/'
+            })
+            
             success_count = 0
             for h in holdings:
                 code = h['code']
+                if code in []:
+                    continue
                 try:
-                    # 网易财经API格式
-                    if code.startswith('6'):
-                        url = f'http://api.money.126.net/data/feed/0{code},money.api'
+                    if len(code) == 5:  # 港股
+                        url = f"http://api.money.126.net/data/feed/1{code},money.api"
+                    elif code.startswith('6'):
+                        url = f"http://api.money.126.net/data/feed/0{code},money.api"
                     else:
-                        url = f'http://api.money.126.net/data/feed/1{code},money.api'
-
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Referer': 'https://money.163.com/'
-                    }
-
-                    response = requests.get(url, headers=headers, timeout=3)
-                    if response.status_code == 200 and response.text:
-                        # 网易返回JSONP格式
-                        import json
-                        text = response.text.strip()
+                        url = f"http://api.money.126.net/data/feed/1{code},money.api"
+                    
+                    resp = session.get(url, timeout=5)
+                    if resp.status_code == 200 and resp.text:
+                        text = resp.text.strip()
                         if text.endswith(';'):
                             text = text[:-1]
-
-                        # 尝试提取JSON数据
-                        match = re.search(r'\{[^}]+\}', text)
-                        if match:
-                            try:
-                                data = json.loads(match.group(0))
-                                # 网易API返回格式复杂，这里简化处理
-                                print(f"[持仓] 网易API返回: {code}")
-                            except:
-                                pass
-
+                        
+                        # 网易返回JSONP格式: _ntes_quote_callback({"000001":{"price":...}});
+                        import json
+                        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+                        if json_match:
+                            data = json.loads(json_match.group(0))
+                            for sym, info in data.items():
+                                sc = str(info.get('code', sym)).strip()
+                                # 去掉前缀匹配原始代码
+                                for prefix in ['sh', 'sz', 'hk', '0', '1']:
+                                    if sc.startswith(prefix) and len(sc) > len(prefix):
+                                        sc = sc[len(prefix):]
+                                        break
+                                if sc in code_map or sym in code_map:
+                                    idx = code_map.get(sc) or code_map.get(sym)
+                                    price = float(info.get('price', 0))
+                                    prev = float(info.get('yestclose', info.get('prevclose', 0)))
+                                    if price > 0:
+                                        holdings[idx]['price'] = price
+                                        change = price - prev if prev > 0 else 0
+                                        change_pct = (change / prev) * 100 if prev > 0 else 0
+                                        holdings[idx]['change'] = change
+                                        holdings[idx]['change_pct'] = change_pct
+                                        success_count += 1
+                                        print(f"[网易] OK {sc}: 价格={price}, 涨跌={change_pct:.2f}%")
                 except Exception as e:
-                    print(f"[持仓] 网易API失败 {code}: {e}")
+                    print(f"[网易] 失败 {code}: {e}")
+                    time.sleep(random.uniform(0.1, 0.3))
                     continue
-
-            if success_count > 0:
-                print(f"[持仓] 备用API获取 {success_count}/{len(holdings)} 只股票")
-                return True
-            else:
-                return False
-
+            
+            return success_count > 0
         except Exception as e:
-            print(f"[持仓] 备用API方法失败: {e}")
+            print(f"[网易] 整体失败: {e}")
             return False
-    
+
     def _fetch_prices(self, holdings, stock_codes, code_map, market_type):
         """从指定市场获取价格 - 使用腾讯 API"""
         try:
@@ -759,7 +1009,7 @@ class FundAnalyzer:
                             holdings[idx]['change'] = change
                             holdings[idx]['change_pct'] = change_pct
                             matched_count += 1
-                            print(f"[持仓] ✓ {stock_code}: 价格={price}, 涨跌={change_pct}%")
+                            print(f"[持仓] OK {stock_code}: 价格={price}, 涨跌={change_pct}%")
 
             print(f"[持仓] {market_type}匹配了 {matched_count} 只股票")
 
@@ -790,9 +1040,9 @@ class FundAnalyzer:
                                 holdings[idx]['change'] = item.get('f4', 0)  # 涨跌额
                                 holdings[idx]['change_pct'] = item.get('f3', 0)  # 涨跌幅
                                 matched_count += 1
-                                print(f"[持仓] ✓ {stock_code}: 价格={holdings[idx]['price']}, 涨跌={holdings[idx]['change_pct']}%")
+                                print(f"[持仓] OK {stock_code}: 价格={holdings[idx]['price']}, 涨跌={holdings[idx]['change_pct']}%")
                             else:
-                                print(f"[持仓] ✗ {stock_code}: 价格为0或空")
+                                print(f"[持仓] FAIL {stock_code}: 价格为0或空")
                         else:
                             print(f"[持仓] ? {full_code}: 不在映射中")
                     print(f"[持仓] {market_type}匹配了 {matched_count} 只股票")

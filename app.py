@@ -105,8 +105,26 @@ def analyze_fund():
         holdings = []
         try:
             print("获取持仓数据...")
-            holdings = analyzer._get_fund_holdings(10)
+            holdings = analyzer._get_fund_holdings(0)
             print(f"持仓数据: {len(holdings)} 条")
+            
+            # 有持仓数据后，重新计算实时估值（基于股票涨跌）
+            if holdings and len(holdings) > 0:
+                recalc_estimate = analyzer._get_realtime_estimate(holdings)
+                if recalc_estimate and not fund_info.get('has_realtime'):
+                    # 如果天天基金接口没返回估值，用自己计算的
+                    from datetime import datetime
+                    now = datetime.now()
+                    fund_info['realtime_net_value'] = recalc_estimate['estimated_value']
+                    fund_info['realtime_day_growth'] = recalc_estimate['estimated_growth']
+                    fund_info['net_value'] = recalc_estimate['estimated_value']
+                    fund_info['day_growth'] = recalc_estimate['estimated_growth']
+                    fund_info['has_realtime'] = True
+                    fund_info['realtime_source'] = 'holdings_calculated'
+                    fund_info['nav_date'] = now.strftime('%Y-%m-%d')
+                    print(f"[实时估值] 使用持仓计算: {recalc_estimate}")
+                elif recalc_estimate:
+                    fund_info['realtime_source'] = 'fundgz_api'
         except Exception as e:
             print(f"持仓数据获取失败（跳过）: {e}")
             holdings = []
@@ -403,7 +421,7 @@ def ai_chat():
                 try:
                     fa = FundAnalyzer(code)
                     fi = fa.get_fund_info()
-                    holdings_data = fa._get_fund_holdings(3)
+                    holdings_data = fa._get_fund_holdings(0)
                     multi_fund_data.append({
                         'code': code,
                         'name': fi.get('fund_name', '未知') if fi else '未知',
@@ -555,7 +573,7 @@ def portfolio_analyze():
             try:
                 analyzer = FundAnalyzer(f['code'])
                 fund_info = analyzer.get_fund_info()
-                holdings = analyzer._get_fund_holdings(5)
+                holdings = analyzer._get_fund_holdings(0)
                 portfolio_data.append({
                     'code': f['code'],
                     'name': fund_info.get('fund_name', '未知') if fund_info else '未知',

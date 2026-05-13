@@ -1682,6 +1682,7 @@
         let chartShowFund = true;
         let chartShowBenchmark = false;
         let chartShowCost = false;
+        let requestSeq = 0;  // 请求序号，用于防止异步竞态
 
         // ===== 主题切换 =====
         function toggleTheme() {
@@ -1731,6 +1732,8 @@
             currentFundCode = fundCode;
             currentBuyPrice = buyPrice;
             currentShares = shares;
+            requestSeq++;  // 递增请求序号，用于防止竞态
+            const mySeq = requestSeq;
 
             // 显示加载状态
             hideError();
@@ -1748,6 +1751,11 @@
                 });
 
                 const result = await response.json();
+                // 检查是否是最新的请求
+                if (mySeq !== requestSeq) {
+                    console.log('忽略过期的分析结果(seq:', mySeq, '!=', requestSeq, ')');
+                    return;
+                }
                 showLoading(false);
 
                 if (result.success) {
@@ -1794,6 +1802,7 @@
         function displayResults(data) {
             const fundInfo = data.fund_info;
             const profitLoss = data.profit_loss;
+            const currentSeq = requestSeq;  // 捕获当前请求序号
 
             // 保存基金信息
             currentFundInfo = {
@@ -1814,31 +1823,33 @@
 
             // 显示基金信息
             displayFundInfo(fundInfo);
+            document.getElementById('fundInfoCard').classList.remove('hidden');
 
             // 显示盈亏
-            displayProfitLoss(profitLoss);
+            if (profitLoss) {
+                displayProfitLoss(profitLoss);
+                document.getElementById('profitCard').classList.remove('hidden');
+            } else {
+                document.getElementById('profitCard').classList.add('hidden');
+            }
 
-            // 显示持仓
+            // 显示持仓（displayHoldings 自己控制显隐）
             displayHoldings(data.holdings || []);
 
             // 显示历史走势
             if (data.history && data.history.length > 0) {
-                displayChart(data.history);
+                displayChart(data.history, currentSeq);
+                document.getElementById('chartCard').classList.remove('hidden');
+            } else {
+                document.getElementById('chartCard').classList.add('hidden');
             }
 
-            // 加载风险指标
-            loadRiskMetrics();
-
-
-            // 显示卡片
-            document.getElementById('fundInfoCard').classList.remove('hidden');
-            document.getElementById('profitCard').classList.remove('hidden');
-            document.getElementById('chartCard').classList.remove('hidden');
+            // 加载风险指标（传递请求序号防止竞态）
+            loadRiskMetrics(currentSeq);
             document.getElementById('metricsCard').classList.remove('hidden');
-            document.getElementById('holdingsCard').classList.remove('hidden');
+
+            // AI分析区（清空旧数据）
             document.getElementById('aiAnalysisCard').classList.remove('hidden');
-            
-            // 清空AI分析区域，恢复默认状态
             document.getElementById('aiAnalysisContent').innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-brain"></i>
@@ -1854,14 +1865,27 @@
 
         // ===== 基金信息显示 =====
         function displayFundInfo(fundInfo) {
-            const isPositive = fundInfo.day_growth >= 0;
+            const nav = fundInfo.net_value != null ? fundInfo.net_value : 0;
+            const growth = fundInfo.day_growth != null ? fundInfo.day_growth : 0;
+            const isPositive = growth >= 0;
             const changeClass = isPositive ? 'positive' : 'negative';
             const changeSign = isPositive ? '+' : '';
+            const navDate = fundInfo.nav_date || '未知';
+            let navTypeText = '官方净值';
+            if (fundInfo.has_realtime) {
+                if (fundInfo.realtime_source === 'holdings_calculated') {
+                    navTypeText = '持仓估算';
+                } else if (fundInfo.realtime_source === 'fundgz_api') {
+                    navTypeText = '实时估算';
+                } else {
+                    navTypeText = '实时估算';
+                }
+            }
 
             document.getElementById('fundInfoContent').innerHTML = `
                 <div class="fund-basic">
-                    <div class="fund-name">${fundInfo.fund_name}</div>
-                    <div class="fund-code">${fundInfo.fund_code}</div>
+                    <div class="fund-name">${fundInfo.fund_name || '未知'}</div>
+                    <div class="fund-code">${fundInfo.fund_code || '未知'}</div>
                     <div class="fund-meta">
                         <span class="meta-tag">${fundInfo.fund_type || '未知'}</span>
                         <span class="meta-tag">经理: ${fundInfo.manager || '未知'}</span>
@@ -1869,9 +1893,9 @@
                     </div>
                 </div>
                 <div class="fund-value-section">
-                    <div class="current-nav">${fundInfo.net_value.toFixed(4)}</div>
-                    <div class="nav-change ${changeClass}">${changeSign}${fundInfo.day_growth.toFixed(2)}%</div>
-                    <div class="nav-type">${fundInfo.has_realtime ? '实时估算' : '官方净值'} · ${fundInfo.nav_date}</div>
+                    <div class="current-nav">${nav.toFixed(4)}</div>
+                    <div class="nav-change ${changeClass}">${changeSign}${growth.toFixed(2)}%</div>
+                    <div class="nav-type">${navTypeText} · ${navDate}</div>
                 </div>
             `;
         }
@@ -1927,14 +1951,19 @@
 
         // ===== 持仓显示 =====
         function displayHoldings(holdings) {
+            const tbody = document.getElementById('holdingsBody');
+            const card = document.getElementById('holdingsCard');
+            
             if (!holdings || holdings.length === 0) {
-                document.getElementById('holdingsCard').classList.add('hidden');
+                tbody.innerHTML = '';  // 清空旧数据
+                // 显示卡片，但显示提示信息
+                card.classList.remove('hidden');
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: var(--text-secondary);">暂不支持该基金的持仓查询，或该基金未公布最新持仓数据</td></tr>';
                 return;
             }
 
             document.getElementById('holdingsCard').classList.remove('hidden');
 
-            const tbody = document.getElementById('holdingsBody');
             tbody.innerHTML = holdings.map(h => {
                 const priceHtml = h.price !== null && h.price !== undefined
                     ? `<span class="price-tag">${h.price.toFixed(2)}</span>`
@@ -1964,21 +1993,22 @@
         }
 
         // ===== 图表显示 =====
-        function displayChart(history) {
+        function displayChart(history, mySeq) {
             // 保存历史数据
             window.chartHistory = history;
 
-            // 加载基准数据
-            loadBenchmarkData();
+            // 加载基准数据（传递请求序号防止竞态）
+            loadBenchmarkData(mySeq);
 
             // 渲染图表
             renderChart();
         }
 
-        async function loadBenchmarkData() {
+        async function loadBenchmarkData(mySeq) {
             try {
                 const resp = await fetch(`/api/fund/${currentFundCode}/benchmark`);
                 const result = await resp.json();
+                if (mySeq !== undefined && mySeq !== requestSeq) return;  // 过期请求，忽略
                 if (result.success && result.data) {
                     window.chartBenchmark = result.data.benchmark;
                 }
@@ -2100,10 +2130,11 @@
         }
 
         // ===== 风险指标 =====
-        async function loadRiskMetrics() {
+        async function loadRiskMetrics(mySeq) {
             try {
                 const resp = await fetch(`/api/fund/${currentFundCode}/risk-metrics`);
                 const result = await resp.json();
+                if (mySeq !== undefined && mySeq !== requestSeq) return;  // 过期请求，忽略
                 if (result.success && result.data) {
                     displayMetrics(result.data);
                 }
@@ -2587,6 +2618,8 @@
             document.getElementById('fund_code').value = fund.fund_code;
             document.getElementById('buy_price').value = fund.buy_price;
             document.getElementById('shares').value = fund.shares;
+            // 自动加载该基金的分析数据
+            analyzeFund();
         }
 
         function refreshSavedFund(index) {
