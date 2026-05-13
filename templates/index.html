@@ -2599,18 +2599,28 @@
                 return;
             }
 
-            container.innerHTML = savedFunds.map((f, i) => `
+            container.innerHTML = savedFunds.map((f, i) => {
+                // 清理旧数据中可能残留的后缀
+                let cleanName = f.fund_name || '未知基金';
+                const suffixes = ['基金历史净值 基金档案', '基金历史净值', '基金档案', '天天基金网'];
+                for (const s of suffixes) {
+                    if (cleanName.includes(s)) {
+                        cleanName = cleanName.replace(s, '').trim();
+                        break;
+                    }
+                }
+                return `
                 <div class="saved-fund-item" onclick="loadSavedFund(${i})">
                     <div class="saved-fund-info">
-                        <div class="saved-fund-name">${f.fund_name || '未知基金'}</div>
+                        <div class="saved-fund-name">${cleanName}</div>
                         <div class="saved-fund-code">${f.fund_code} | 成本: ${f.buy_price} | 份额: ${f.shares}</div>
                     </div>
                     <div class="saved-fund-actions">
                         <button class="saved-fund-btn" onclick="event.stopPropagation(); refreshSavedFund(${i})">刷新</button>
                         <button class="saved-fund-btn delete" onclick="event.stopPropagation(); deleteSavedFund(${i})">删除</button>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
 
         function loadSavedFund(index) {
