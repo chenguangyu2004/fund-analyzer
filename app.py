@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 from fund_analyzer import FundAnalyzer
 from stock_analyzer import StockAnalyzer
 from deepseek_analyzer import DeepSeekAnalyzer, StockNewsAnalyzer
+from multifactor_model import MultiFactorModel
 import sys
 import os
 
@@ -214,13 +215,11 @@ def get_stock_kline(stock_code):
 
 @app.route('/api/ai-analyze', methods=['POST'])
 def ai_analyze_fund():
-    """AI基金分析API"""
-    log("=== 收到AI分析请求 ===")
+    """AI多因子透视诊断API"""
+    log("=== 收到AI多因子透视诊断请求 ===")
     try:
         data = request.get_json()
         fund_code = data.get('fund_code', '').strip()
-        fund_info = data.get('fund_info', {})
-        holdings = data.get('holdings', [])
         
         log(f"基金代码: {fund_code}")
         
@@ -229,122 +228,17 @@ def ai_analyze_fund():
                 'success': False,
                 'error': '基金代码不能为空'
             })
-        
-        # 获取市场概况和多渠道新闻
-        market_overview = {}
-        try:
-            log("获取市场概况...")
-            # 获取主要指数
-            indices = {
-                '上证指数': StockNewsAnalyzer.get_index_quote("sh000001"),
-                '深证成指': StockNewsAnalyzer.get_index_quote("sz399001"),
-                '创业板': StockNewsAnalyzer.get_index_quote("sz399006"),
-                '沪深300': StockNewsAnalyzer.get_index_quote("sh000300")
-            }
-            market_overview['indices'] = indices
-            
-            # 获取多渠道新闻
-            all_news = []
-            
-            # 来源1：基金公司官网公告（基金公告/定期报告）
-            try:
-                fund_analyzer_for_news = FundAnalyzer(fund_code)
-                fund_news = fund_analyzer_for_news.get_fund_news(5)
-                for n in fund_news:
-                    n['source_type'] = '基金公告'
-                all_news.extend(fund_news)
-                log(f"基金公告: {len(fund_news)} 条")
-            except Exception as e:
-                log(f"获取基金公告失败: {e}")
-            
-            # 来源2：市场新闻（财经媒体 - 新浪财经）
-            try:
-                market_news = StockNewsAnalyzer.get_market_news()
-                for n in market_news[:5]:
-                    n['source_type'] = '财经媒体'
-                all_news.extend(market_news[:5])
-                log(f"财经媒体新闻: {len(market_news[:5])} 条")
-            except Exception as e:
-                log(f"获取市场新闻失败: {e}")
-            
-            # 来源3：持仓股票新闻（第三方平台 - 东方财富）
-            for holding in holdings[:3]:  # 取前3只重仓股
-                try:
-                    stock_code = holding.get('code', '')
-                    if stock_code:
-                        s_analyzer = StockAnalyzer(stock_code)
-                        stock_news = s_analyzer.get_stock_news(3)
-                        for n in stock_news[:3]:
-                            n['source_type'] = '持仓股资讯'
-                            n['related_stock'] = holding.get('name', stock_code)
-                        all_news.extend(stock_news[:3])
-                except:
-                    pass
-            
-            # 去重并按时间排序
-            seen_titles = set()
-            unique_news = []
-            for n in all_news:
-                title = n.get('title', '')[:50]
-                if title and title not in seen_titles:
-                    seen_titles.add(title)
-                    unique_news.append(n)
-            
-            market_overview['news'] = unique_news[:15]
-            log(f"总新闻量: {len(unique_news)} 条")
-        except Exception as e:
-            log(f"获取市场概况失败（跳过）: {e}")
-        
-        # 获取持仓股票的K线数据
-        log("获取持仓股票K线趋势...")
-        kline_data = {}
-        try:
-            for holding in holdings[:5]:  # 取前5只重仓股
-                stock_code = holding.get('code', '')
-                if stock_code:
-                    s_analyzer = StockAnalyzer(stock_code)
-                    # 获取近1年K线数据（约250个交易日）
-                    stock_kline = s_analyzer.get_kline_data('daily', 250)
-                    if stock_kline:
-                        # 添加股票名称
-                        for k in stock_kline:
-                            k['stock_name'] = holding.get('name', stock_code)
-                        kline_data[stock_code] = stock_kline
-                        log(f"  {stock_code}: 获取到 {len(stock_kline)} 条K线")
-        except Exception as e:
-            log(f"获取K线数据失败（跳过）: {e}")
-        log(f"共获取 {len(kline_data)} 只股票的K线数据")
-        
-        # 获取基金经理变更历史和投资策略
-        log("获取基金经理和策略信息...")
-        try:
-            fund_analyzer = FundAnalyzer(fund_code)
-            manager_history = fund_analyzer.get_manager_history()
-            fund_strategy = fund_analyzer.get_fund_strategy()
-            fund_info['manager_history'] = manager_history
-            fund_info['fund_strategy'] = fund_strategy
-            log(f"基金经理: {manager_history.get('manager')}, 近期变更: {manager_history.get('recent_changed')}")
-        except Exception as e:
-            log(f"获取经理/策略信息失败（跳过）: {e}")
 
-        # 调用DeepSeek AI分析
-        log("开始AI分析...")
         api_key = data.get('api_key', '')
-        analyzer = DeepSeekAnalyzer(api_key)
+        model = MultiFactorModel(fund_code, api_key)
+        result = model.run_diagnosis()
         
-        result = analyzer.analyze_fund(
-            fund_info=fund_info,
-            holdings=holdings,
-            market_overview=market_overview,
-            news=market_overview.get('news', []),
-            kline_data=kline_data
-        )
+        if result.get('success'):
+            log(f"多因子诊断完成: 综合={result.get('composite_score')}分")
+        else:
+            log(f"多因子诊断失败: {result.get('error')}")
         
-        log(f"AI分析完成: {result.get('final_advice', 'N/A')}")
-        return jsonify({
-            'success': True,
-            'data': result
-        })
+        return jsonify(result)
         
     except Exception as e:
         log(f"!!! AI分析失败: {e} !!!")
@@ -391,6 +285,39 @@ def check_api_key():
         'configured': bool(api_key),
         'message': 'API密钥已配置' if api_key else '请配置DeepSeek API密钥（环境变量: DEEPSEEK_API_KEY）'
     })
+
+@app.route('/dashboard')
+def dashboard_page():
+    """AI多因子透视诊断仪表盘"""
+    return render_template('dashboard.html')
+
+@app.route('/api/multifactor-diagnosis', methods=['POST'])
+def multifactor_diagnosis():
+    """AI多因子透视诊断API"""
+    log("=== 收到多因子透视诊断请求 ===")
+    try:
+        data = request.get_json()
+        fund_code = data.get('fund_code', '').strip()
+        api_key = data.get('api_key', '')
+
+        if not fund_code:
+            return jsonify({'success': False, 'error': '基金代码不能为空'})
+
+        log(f"基金代码: {fund_code}")
+
+        model = MultiFactorModel(fund_code, api_key)
+        result = model.run_diagnosis()
+
+        return jsonify(result)
+
+    except Exception as e:
+        log(f"!!! 多因子诊断失败: {e} !!!")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': f'诊断失败: {str(e)}'
+        })
 
 @app.route('/api/ai-chat', methods=['POST'])
 def ai_chat():

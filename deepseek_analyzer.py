@@ -328,18 +328,18 @@ class DeepSeekAnalyzer:
         
         return prompt
     
-    def _call_deepseek_api(self, prompt: str, retry_count: int = 2) -> Dict:
+    def _call_deepseek_api(self, prompt: str, retry_count: int = 1) -> Dict:
         """调用DeepSeek API"""
         
         if not self.api_key:
             raise Exception("DeepSeek API密钥未配置")
         
         data = {
-            "model": "deepseek-v4-pro",
+            "model": "deepseek-chat",
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是纯粹的数据分析工具，没有感情和立场。只基于提供的基金数据和市场数据进行客观分析，不带有任何情感色彩、鼓励或安慰。输出结构清晰、逻辑严谨、用词中性。"
+                    "content": "你是AI多因子透视诊断引擎，严格遵循以下分析框架。\n\n## 五模型体系\n你只使用以下5个模型进行分析：\n- M1个股质量(25%): ROE/毛利率/净利增速/营收增速/OCF与NI比/负债率/速动比率 → 判断持仓公司质量\n- M2估值性价比(25%): PE分位数/PB分位数/PEG/股息率 → 判断当前估值贵不贵\n- M3舆情动量(20%): 新闻情感/分析师评级/机构调研/资金流向 → 判断市场认可度\n- M4行业景气(15%): 行业景气度/政策支持/宏观环境匹配 → 判断赛道顺风逆风\n- M5经理行为(15%): 风格稳定性/调仓质量/言行一致性/业绩可持续 → 判断基金经理靠谱程度\n\n## 综合评分\nS_composite = Σ w_i × M_i（权重由市场环境动态调整）\n\n## 输出要求\n- 只分析给出的数据，不编造任何数字\n- 分析必须覆盖全部5个模型，每个模型给出亮点和隐忧\n- 结合具体指标值（如ROE值、PE分位数、行业分布）而非泛泛而谈\n- 用中文输出，结构清晰，逻辑严谨"
                 },
                 {
                     "role": "user", 
@@ -356,7 +356,7 @@ class DeepSeekAnalyzer:
                     DEEPSEEK_API_URL,
                     headers=self.headers,
                     json=data,
-                    timeout=120
+                    timeout=45
                 )
                 
                 if response.status_code == 200:

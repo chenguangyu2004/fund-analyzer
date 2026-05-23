@@ -23,11 +23,15 @@ class FundAnalyzer:
         try:
             # 同时获取官方净值和实时估算净值
             official_data = self._get_official_net_value()
-            realtime_data = self._get_realtime_estimate(holdings)
-
             if not official_data:
                 print("无法获取官方净值数据")
                 return None
+
+            realtime_data = None
+            try:
+                realtime_data = self._get_realtime_estimate(holdings)
+            except Exception as e:
+                print(f"实时估值获取失败(跳过): {e}")
 
             try:
                 current_time = datetime.now()
@@ -46,8 +50,21 @@ class FundAnalyzer:
                     update_time = ''
 
             # 获取详细的基金信息（经理、规模、涨跌幅等）
-            extra_info = self._get_fund_extra_info()
-            growth_rates = self._get_fund_growth_rates()
+            extra_info = {}
+            try:
+                extra_info = self._get_fund_extra_info()
+            except Exception as e:
+                print(f"额外信息获取失败(跳过): {e}")
+            if not extra_info:
+                extra_info = {'fund_manager': '未知', 'fund_type': '未知', 'scale': '未知'}
+            
+            growth_rates = {}
+            try:
+                growth_rates = self._get_fund_growth_rates()
+            except Exception as e:
+                print(f"涨跌幅获取失败(跳过): {e}")
+            if not growth_rates:
+                growth_rates = {'month_1': None, 'month_3': None, 'month_6': None, 'year_1': None}
 
             # 合并数据
             self.fund_data = {
@@ -282,6 +299,54 @@ class FundAnalyzer:
                         print(f"[官方净值] 方法3成功: 净值={net_value}, 名称={fund_name}")
             except Exception as e:
                 print(f"[官方净值] 方法3失败: {e}")
+        
+        # 方法4: 从pingzhongdata JS获取（QDII等特殊基金兜底）
+        if net_value <= 0:
+            try:
+                url4 = f"http://fund.eastmoney.com/pingzhongdata/{self.fund_code}.js"
+                print(f"[官方净值] 方法4(pingzhongdata): {url4}")
+                r4 = requests.get(url4, headers=headers, timeout=15)
+                if r4.status_code == 200:
+                    text = r4.text
+                    # 提取基金名称
+                    name_m = re.search(r'fS_name\s*=\s*"([^"]+)"', text)
+                    if name_m:
+                        fund_name = name_m.group(1)
+                    # 提取最新净值（Data_netWorthTrend最后一个数据点）
+                    # 注意：变量名后可能有空格 "Data_netWorthTrend = [..."
+                    nwt_m = re.search(r'Data_netWorthTrend\s*=\s*(\[.*?\]);', text, re.DOTALL)
+                    if nwt_m:
+                        try:
+                            import json as _json
+                            nwt_data = _json.loads(nwt_m.group(1))
+                            if nwt_data and len(nwt_data) > 0:
+                                last = nwt_data[-1]
+                                net_value = float(last.get('y', 0))
+                                # 日期从时间戳转换
+                                ts = last.get('x', 0)
+                                if ts:
+                                    from datetime import datetime as _dt
+                                    nav_date = _dt.fromtimestamp(ts / 1000).strftime('%Y-%m-%d')
+                                print(f"[官方净值] 方法4成功: 净值={net_value}, 日期={nav_date}")
+                        except Exception as e4:
+                            print(f"[官方净值] 方法4解析失败: {e4}")
+                    # 备用：从Data_ACWorthTrend获取累计净值
+                    if net_value > 0 and accumulated_value <= 0:
+                        acw_m = re.search(r'Data_ACWorthTrend\s*=\s*(\[.*?\]);', text, re.DOTALL)
+                        if acw_m:
+                            try:
+                                import json as _json
+                                acw_data = _json.loads(acw_m.group(1))
+                                if acw_data and len(acw_data) > 0:
+                                    last_acw = acw_data[-1]
+                                    if isinstance(last_acw, list) and len(last_acw) >= 2:
+                                        accumulated_value = float(last_acw[1])
+                                    elif isinstance(last_acw, dict):
+                                        accumulated_value = float(last_acw.get('y', 0))
+                            except Exception:
+                                pass
+            except Exception as e:
+                print(f"[官方净值] 方法4失败: {e}")
         
         print(f"[官方净值] 最终结果: 净值={net_value}, 日期={nav_date}, 名称={fund_name}")
         
