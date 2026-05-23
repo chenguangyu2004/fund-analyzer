@@ -712,111 +712,59 @@ class StockAnalyzer:
             'note': '该数据暂不可用'
         }
     
-    def get_stock_news(self, limit=10):
-        """获取股票相关新闻 - 爬取新浪财经最近5天的内容"""
+    def get_stock_news(self, limit=20):
+        """获取股票相关新闻 - 使用新浪个股新闻页面（最准确、最稳定）"""
         news_list = []
         code = self.stock_code
-        stock_name = ''
         
-        # 先获取股票名称
+        # 确定新浪symbol
+        if code.startswith('6'):
+            sina_symbol = f"sh{code}"
+        elif code.startswith('0') or code.startswith('3'):
+            sina_symbol = f"sz{code}"
+        elif len(code) == 5:
+            sina_symbol = f"hk{code}"
+        else:
+            sina_symbol = f"sz{code}"
+        
+        # 1. 新浪个股新闻页面（最稳定、最准确的个股新闻来源）
         try:
-            if code.startswith('6'):
-                symbol = f"sh{code}"
-            elif code.startswith('0') or code.startswith('3'):
-                symbol = f"sz{code}"
-            elif len(code) == 5:
-                symbol = f"hk{code.zfill(5)}"
-            else:
-                symbol = f"sz{code}"
-            
-            url = f'https://hq.sinajs.cn/list={symbol}'
-            headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'}
-            resp = self.session.get(url, headers=headers, timeout=5)
-            resp.encoding = 'gbk'
-            if resp.status_code == 200:
-                match = re.search(r'["\']([^"\']+)["\']', resp.text)
-                if match:
-                    stock_name = match.group(1).split(',')[0] if ',' in match.group(1) else match.group(1)
-                    print(f"[新闻] 股票名称: {stock_name}")
-        except:
-            pass
-        
-        # 计算5天前的日期
-        from datetime import timedelta
-        five_days_ago = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
-        
-        # 1. 新浪财经个股新闻（主要来源）
-        try:
-            keyword = stock_name or code
-            # 新浪财经搜索API
-            url = f"https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k={keyword}&num={limit}&page=1&r=0.5"
+            url = f'https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/{sina_symbol}/pageno/1.phtml'
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://finance.sina.com.cn/'
             }
-            response = self.session.get(url, headers=headers, timeout=8)
+            response = self.session.get(url, headers=headers, timeout=10)
+            response.encoding = 'gbk'
+            
             if response.status_code == 200:
-                data = response.json()
-                items = data.get('result', {}).get('data', [])
-                print(f"[新浪新闻] 获取到 {len(items)} 条")
-                for item in items:
-                    title = item.get('title', '')
-                    ctime = item.get('ctime', '')
-                    # ctime可能是时间戳或日期字符串，统一处理
-                    if ctime:
-                        try:
-                            if isinstance(ctime, (int, float)) or (isinstance(ctime, str) and ctime.isdigit()):
-                                # 时间戳格式
-                                ctime_str = datetime.fromtimestamp(int(ctime)).strftime('%Y-%m-%d')
-                            else:
-                                ctime_str = str(ctime)[:10]  # 取前10位日期部分
-                        except:
-                            ctime_str = str(ctime)[:10]
-                    else:
-                        ctime_str = ''
+                # 解析HTML - 格式: &nbsp;&nbsp;&nbsp;&nbsp;2026-05-23&nbsp;10:35&nbsp;&nbsp;<a href='url'>标题</a>
+                pattern = r"&nbsp;(\d{4}-\d{2}-\d{2})\s*&nbsp;(\d{2}:\d{2})?\s*&nbsp;.*?<a[^>]*href=['\"]([^'\"]*)['\"][^>]*>([^<]*)</a>"
+                matches = re.findall(pattern, response.text)
+                print(f"[新浪个股新闻] 解析到 {len(matches)} 条")
+                
+                for date, time_str, news_url, title in matches:
+                    if not title.strip():
+                        continue
+                    title = title.strip()
+                    # 清理HTML实体
+                    title = title.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+                    pub_time = f"{date} {time_str}" if time_str else date
                     
-                    # 过滤最近5天的新闻（如果没有日期则也包含）
-                    if not ctime_str or ctime_str >= five_days_ago:
-                        news_list.append({
-                            'title': title,
-                            'publish_time': ctime_str or ctime,
-                            'source': '新浪财经',
-                            'type': '新闻',
-                            'url': item.get('url', '')
-                        })
+                    news_list.append({
+                        'title': title,
+                        'publish_time': pub_time,
+                        'source': '新浪财经',
+                        'type': '新闻',
+                        'url': news_url
+                    })
+                    
+                    if len(news_list) >= limit:
+                        break
         except Exception as e:
-            print(f"[新浪新闻] 获取失败: {e}")
+            print(f"[新浪个股新闻] 获取失败: {e}")
         
-        # 2. 新浪财经-个股专区新闻
-        if len(news_list) < limit:
-            try:
-                keyword = stock_name or code
-                # 新浪财经另一个搜索接口
-                url = f"https://search.sina.com.cn/news/q={keyword}&range=all&c=news&sort=time&num={limit}&page=1"
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': 'https://search.sina.com.cn/'
-                }
-                response = self.session.get(url, headers=headers, timeout=8)
-                if response.status_code == 200:
-                    # 解析HTML结果
-                    resp_text = response.text
-                    # 匹配新闻条目
-                    news_matches = re.findall(r'<h2><a[^>]*href="([^"]*)"[^>]*>([^<]*)</a></h2>.*?<span class="fgray_time">([^<]*)</span>', resp_text, re.DOTALL)
-                    print(f"[新浪搜索] 获取到 {len(news_matches)} 条")
-                    for url_item, title, pub_time in news_matches:
-                        if title and (not pub_time or pub_time >= five_days_ago or len(pub_time) < 10):
-                            news_list.append({
-                                'title': title.strip(),
-                                'publish_time': pub_time.strip() if pub_time else '',
-                                'source': '新浪财经',
-                                'type': '新闻',
-                                'url': url_item
-                            })
-            except Exception as e:
-                print(f"[新浪搜索] 获取失败: {e}")
-        
-        # 3. 东方财富公司公告（权威补充）
+        # 2. 东方财富公司公告（补充）
         if len(news_list) < limit:
             try:
                 if code.startswith('6'):
@@ -828,7 +776,7 @@ class StockAnalyzer:
                 else:
                     secid = f"0.{code}"
                 
-                url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={limit}&page_index=1&ann_type=SHA%2CSZA&client_source=web&stock_list={secid}'
+                url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={limit - len(news_list)}&page_index=1&ann_type=SHA%2CSZA&client_source=web&stock_list={secid}'
                 headers = {
                     'User-Agent': 'Mozilla/5.0',
                     'Referer': 'https://data.eastmoney.com/'
@@ -842,16 +790,16 @@ class StockAnalyzer:
                         print(f"[东方财富公告] 获取到 {len(items)} 条")
                         for item in items:
                             title = item.get('title', '') or item.get('notice_title', '')
-                            pub_time = str(item.get('publish_time', ''))
-                            # 过滤最近5天
-                            if pub_time and pub_time >= five_days_ago:
-                                news_list.append({
-                                    'title': title,
-                                    'publish_time': pub_time,
-                                    'source': '东方财富',
-                                    'type': '公告',
-                                    'art_id': item.get('notice_id', '')
-                                })
+                            pub_time = str(item.get('publish_time', ''))[:10]
+                            news_list.append({
+                                'title': title,
+                                'publish_time': pub_time,
+                                'source': '东方财富',
+                                'type': '公告',
+                                'url': f"https://data.eastmoney.com/notices/detail/{secid}/{item.get('notice_id', '')}.html"
+                            })
+                            if len(news_list) >= limit:
+                                break
             except Exception as e:
                 print(f"[东方财富公告] 获取失败: {e}")
         
@@ -864,7 +812,7 @@ class StockAnalyzer:
                 seen_titles.add(title)
                 unique_news.append(news)
         
-        print(f"[新闻] 最终返回 {len(unique_news)} 条（最近5天）")
+        print(f"[新闻] 最终返回 {len(unique_news)} 条")
         return unique_news[:limit]
     
     def _get_industry_stocks(self, industry, limit=10):
@@ -1129,44 +1077,85 @@ class StockAnalyzer:
         return []
     
     def get_kline_data(self, period='daily', limit=60):
-        """
-        获取K线数据
-        
-        Args:
-            period: K线周期 ('daily', 'weekly', 'monthly', 'minute'等)
-            limit: 返回数据条数
-        
-        Returns:
-            K线数据列表
-        """
+        """获取K线数据 - 使用腾讯财经API"""
+        print(f"[K线] 开始获取 {period} {self.stock_code}")
         try:
             code = self.stock_code
             
-            # 确定市场前缀和secid
+            # 确定腾讯symbol
             if code.startswith('6'):
                 symbol = f"sh{code}"
-                secid = f"1.{code}"
             elif code.startswith('0') or code.startswith('3'):
                 symbol = f"sz{code}"
-                secid = f"0.{code}"
             elif len(code) == 5:
                 symbol = f"hk{code.zfill(5)}"
-                secid = f"116.{code}"
             elif code.startswith(('8', '4', '9')):
-                symbol = f"bj{code}"
-                secid = f"0.{code}"  # 北交所使用0前缀
+                symbol = f"sz{code}"
             else:
                 symbol = f"sz{code}"
+            
+            # 腾讯K线API: period参数 day/week/month
+            period_map = {
+                'daily': 'day',
+                'weekly': 'week',
+                'monthly': 'month',
+            }
+            p = period_map.get(period, 'day')
+            
+            url = f'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},{p},,,{limit},qfq'
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://gu.qq.com/',
+            }
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and data.get('data') and data['data'].get(symbol):
+                    stock_data = data['data'][symbol]
+                    # 根据周期查找对应的key: qfqday, qfqweek, qfqmonth
+                    key = f'qfq{p}'
+                    klines = stock_data.get(key, stock_data.get(p, []))
+                    
+                    result = []
+                    for kline in klines:
+                        # 格式: [日期, 开盘, 收盘, 最高, 最低, 成交量]
+                        if len(kline) >= 6:
+                            result.append({
+                                'date': kline[0],
+                                'open': self._safe_float(kline[1]),
+                                'close': self._safe_float(kline[2]),
+                                'high': self._safe_float(kline[3]),
+                                'low': self._safe_float(kline[4]),
+                                'volume': self._safe_float(kline[5]),
+                            })
+                    print(f"[K线数据-腾讯] {period} 获取到 {len(result)} 条")
+                    return result
+        except Exception as e:
+            import traceback
+            print(f"[K线数据-腾讯] 失败: {e}")
+            traceback.print_exc()
+        
+        # 降级：尝试东方财富API
+        try:
+            code = self.stock_code
+            if code.startswith('6'):
+                secid = f"1.{code}"
+            elif code.startswith('0') or code.startswith('3'):
+                secid = f"0.{code}"
+            elif len(code) == 5:
+                secid = f"116.{code}"
+            elif code.startswith(('8', '4', '9')):
+                secid = f"0.{code}"
+            else:
                 secid = f"0.{code}"
             
-            # 使用东方财富API获取K线数据
-            # period: 101=日K, 102=周K, 103=月K
-            period_map = {
+            period_map2 = {
                 'daily': '101',
                 'weekly': '102', 
                 'monthly': '103',
             }
-            ft = period_map.get(period, '101')
+            ft = period_map2.get(period, '101')
             
             url = f'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt={ft}&fqt=1&end=20500101&lmt={limit}'
             headers = {
@@ -1181,7 +1170,6 @@ class StockAnalyzer:
                     klines = data['data']['klines']
                     result = []
                     for kline in klines:
-                        # 格式: 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
                         parts = kline.split(',')
                         if len(parts) >= 6:
                             result.append({
@@ -1192,9 +1180,10 @@ class StockAnalyzer:
                                 'low': self._safe_float(parts[4]),
                                 'volume': self._safe_float(parts[5]),
                             })
+                    print(f"[K线数据-东方财富] {period} 获取到 {len(result)} 条")
                     return result
         except Exception as e:
-            print(f"[K线数据] 获取失败: {e}")
+            print(f"[K线数据-东方财富] 也失败: {e}")
         
         return []
     
