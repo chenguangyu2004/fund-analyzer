@@ -168,17 +168,7 @@ def get_stock_detail(stock_code):
         elif not stock_info.get('name'):
             stock_info['name'] = stock_code
         
-        # 获取相关新闻
-        log("获取股票新闻...")
-        news = analyzer.get_stock_news(10)
-        stock_info['news'] = news
-        log(f"新闻数量: {len(news)}")
-        
-        # 获取行业龙头股
-        log("获取行业龙头股...")
-        industry_leaders = analyzer.get_industry_leaders(10)
-        stock_info['industry_leaders'] = industry_leaders
-        log(f"行业龙头股数量: {len(industry_leaders)}")
+        # 新闻和行业龙头已在 get_stock_info() 中获取，无需重复调用
         
         # 获取财务数据
         log("获取财务数据...")

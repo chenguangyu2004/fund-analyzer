@@ -783,7 +783,7 @@
                 newsSection.innerHTML = `
                     <ul class="news-list">
                         ${data.news.map(news => `
-                            <li class="news-item" onclick="window.open('https://finance.eastmoney.com/news/${encodeURIComponent(news.art_id || '')}.html', '_blank')">
+                            <li class="news-item" ${news.url ? `onclick="window.open('${escapeHtml(news.url)}', '_blank')"` : ''}>
                                 <div class="news-title">${escapeHtml(news.title || '')}</div>
                                 <div class="news-meta">
                                     <span>${escapeHtml(news.publish_time || news.notice_date || '')}</span>
@@ -805,11 +805,12 @@
                     const safeName = escapeHtml(stock.name || '');
                     const safeCode = escapeHtml(stock.code || '');
                     const safeMarket = escapeHtml(stock.market || '');
+                    const marketTag = safeMarket ? `<span style="font-size:0.75em;padding:1px 6px;border-radius:10px;margin-left:6px;background:${safeMarket==='港股'?'#fef3c7':'#eff6ff'};color:${safeMarket==='港股'?'#92400e':'#1d4ed8'};border:1px solid ${safeMarket==='港股'?'#fbbf24':'#93c5fd'}">${safeMarket}</span>` : '';
                     return `
                         <div class="industry-stock-item" onclick="viewStock('${safeCode}', '${safeName}')">
                             <div class="stock-info-left">
-                                <div class="stock-name-small">${safeName}</div>
-                                <div class="stock-code-small">${safeCode} ${safeMarket}</div>
+                                <div class="stock-name-small">${safeName}${marketTag}</div>
+                                <div class="stock-code-small">${safeCode}</div>
                             </div>
                             <div class="stock-right">
                                 <div class="stock-price-small">${stock.price > 0 ? stock.price.toFixed(2) : '--'}</div>

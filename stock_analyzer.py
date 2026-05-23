@@ -226,10 +226,12 @@ class StockAnalyzer:
         '光伏': '光伏',
         '能源': '光伏',
         '互联网': '互联网',
-        '云': '云计算',
-        '数据': '云计算',
-        '软件': '软件',
-        '科技': '互联网',
+        '云': '计算机/软件服务',
+        '数据': '计算机/软件服务',
+        '软件': '计算机/软件服务',
+        '计算机': '计算机/软件服务',
+        '信息': '计算机/软件服务',
+        '讯飞': '计算机/软件服务',
         '半导': '半导体',
         '芯片': '半导体',
         '宠物': '宠物经济',
@@ -240,6 +242,8 @@ class StockAnalyzer:
     def __init__(self, stock_code):
         self.stock_code = stock_code
         self.session = self._create_session()
+        self._industry_cache = None  # 行业缓存，避免重复请求
+        self._stock_name_cache = None  # 股票名称缓存
     
     def _create_session(self):
         """创建带反爬虫头的Session"""
@@ -571,18 +575,78 @@ class StockAnalyzer:
         return result if result else None
     
     def _get_stock_industry(self):
-        """获取股票所属行业"""
+        """获取股票所属行业（带缓存）"""
+        if self._industry_cache is not None:
+            return self._industry_cache
+        result = self._get_stock_industry_impl()
+        self._industry_cache = result
+        return result
+    
+    def _get_stock_industry_impl(self):
+        """获取股票所属行业 - 优先从东方财富获取申万行业分类"""
         code = self.stock_code
         
-        # 1. 先从映射表获取
+        # 1. 优先从东方财富获取行业信息（最准确）
+        try:
+            if code.startswith('6'):
+                secid = f"1.{code}"
+            elif code.startswith('0') or code.startswith('3'):
+                secid = f"0.{code}"
+            elif code.startswith(('8', '4', '9')):
+                secid = f"0.{code}"
+            else:
+                secid = f"0.{code}"
+            
+            url = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f100'
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://finance.eastmoney.com/'
+            }
+            response = self.session.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data and data.get('data'):
+                    industry_em = data['data'].get('f100', '')  # 东方财富行业
+                    if industry_em:
+                        print(f"[行业识别] 东方财富行业: {industry_em}")
+                        # 映射东方财富行业到我们的分类
+                        industry_mapping = {
+                            '计算机': '计算机/软件服务', '软件': '计算机/软件服务', 'IT服务': '计算机/软件服务',
+                            '互联网': '互联网', '传媒': '互联网',
+                            '新能源': '新能源汽车', '汽车': '新能源汽车', '电动车': '新能源汽车',
+                            '白酒': '白酒', '啤酒': '白酒',
+                            '银行': '银行',
+                            '保险': '保险',
+                            '医药': '医药', '中药': '医药', '生物': '医药',
+                            '医疗器械': '医疗设备',
+                            '光伏': '光伏', '太阳能': '光伏',
+                            '云计算': '计算机/软件服务', '大数据': '计算机/软件服务',
+                            '宠物': '宠物经济',
+                            '半导': '半导体', '芯片': '半导体', '集成电路': '半导体',
+                            '通信': '互联网', '电子': '半导体',
+                            '游戏': '互联网',
+                            '家电': '家电',
+                            '食品': '食品',
+                            '房地产': '房地产',
+                            '证券': '券商', '券商': '券商',
+                            '基建': '基建', '建筑': '基建',
+                        }
+                        for keyword, ind in industry_mapping.items():
+                            if keyword in industry_em:
+                                return ind
+                        # 如果没有匹配到映射，直接使用东方财富的行业名称
+                        return industry_em
+        except Exception as e:
+            print(f"[行业识别] EM接口失败: {e}")
+        
+        # 2. 从映射表获取
         industry = self.STOCK_INDUSTRY_MAP.get(code, '')
         if industry:
             return industry
         
-        # 2. 如果映射表没有，尝试从公司名称获取
+        # 3. 根据公司名称关键词匹配行业
         stock_name = ''
         try:
-            # 获取股票名称
             if code.startswith('6'):
                 symbol = f"sh{code}"
             elif code.startswith('0') or code.startswith('3'):
@@ -603,52 +667,12 @@ class StockAnalyzer:
                 if match:
                     stock_name = match.group(1).split(',')[0] if ',' in match.group(1) else match.group(1)
                     print(f"[行业识别] 股票名称: {stock_name}")
-                    # 根据名称关键词匹配行业
                     for keyword, ind in self.INDUSTRY_KEYWORDS.items():
                         if keyword in stock_name:
                             print(f"[行业识别] 匹配成功: {keyword} -> {ind}")
                             return ind
         except Exception as e:
             print(f"[行业识别] 获取名称失败: {e}")
-        
-        # 3. 尝试从东方财富获取行业信息
-        try:
-            if code.startswith('6'):
-                secid = f"1.{code}"
-            else:
-                secid = f"0.{code}"
-            
-            url = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f100'
-            headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Referer': 'https://finance.eastmoney.com/'
-            }
-            response = self.session.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and data.get('data'):
-                    d = data['data']
-                    industry_em = d.get('f100', '')  # 东方财富行业
-                    print(f"[行业识别] 东方财富行业: {industry_em}")
-                    # 映射东方财富行业到我们的分类
-                    industry_mapping = {
-                        '新能源': '新能源汽车', '汽车': '新能源汽车', '电动车': '新能源汽车',
-                        '白酒': '白酒', '啤酒': '白酒',
-                        '银行': '银行',
-                        '保险': '保险',
-                        '医药': '医药', '中药': '医药', '医疗器械': '医疗设备', '生物': '医药',
-                        '光伏': '光伏', '太阳能': '光伏',
-                        '互联网': '互联网', '软件': '软件', '云计算': '云计算', '大数据': '云计算',
-                        '宠物': '宠物经济',
-                        '半导': '半导体', '芯片': '半导体', '集成电路': '半导体',
-                        '通信': '互联网', '电子': '半导体',
-                        '游戏': '软件', '传媒': '软件',
-                    }
-                    for keyword, ind in industry_mapping.items():
-                        if industry_em and keyword in industry_em:
-                            return ind
-        except Exception as e:
-            print(f"[行业识别] EM接口失败: {e}")
         
         print(f"[行业识别] 无法识别 {code} ({stock_name}) 的行业")
         return ''
@@ -738,11 +762,24 @@ class StockAnalyzer:
                 for item in items:
                     title = item.get('title', '')
                     ctime = item.get('ctime', '')
-                    # 过滤最近5天的新闻
-                    if ctime and ctime >= five_days_ago:
+                    # ctime可能是时间戳或日期字符串，统一处理
+                    if ctime:
+                        try:
+                            if isinstance(ctime, (int, float)) or (isinstance(ctime, str) and ctime.isdigit()):
+                                # 时间戳格式
+                                ctime_str = datetime.fromtimestamp(int(ctime)).strftime('%Y-%m-%d')
+                            else:
+                                ctime_str = str(ctime)[:10]  # 取前10位日期部分
+                        except:
+                            ctime_str = str(ctime)[:10]
+                    else:
+                        ctime_str = ''
+                    
+                    # 过滤最近5天的新闻（如果没有日期则也包含）
+                    if not ctime_str or ctime_str >= five_days_ago:
                         news_list.append({
                             'title': title,
-                            'publish_time': ctime,
+                            'publish_time': ctime_str or ctime,
                             'source': '新浪财经',
                             'type': '新闻',
                             'url': item.get('url', '')
@@ -944,7 +981,7 @@ class StockAnalyzer:
         return stocks[:limit]
     
     def get_industry_leaders(self, limit=10):
-        """获取行业龙头股 - 使用AI动态搜索"""
+        """获取行业龙头股 - 使用AI动态搜索，包含A股和港股"""
         industry = self._get_stock_industry()
         stock_name = ''
         
@@ -975,20 +1012,20 @@ class StockAnalyzer:
             from deepseek_analyzer import DeepSeekAnalyzer
             import os
             api_key = os.environ.get('DEEPSEEK_API_KEY', '')
-            analyzer = DeepSeekAnalyzer(api_key)
             
-            prompt = f"""请列出"{industry or stock_name or self.stock_code}"行业的{limit}只龙头股。
+            prompt = f"""请列出"{industry or stock_name or self.stock_code}"行业的龙头股，需要同时包含A股和港股。
 要求：
 1. 只返回JSON数组，不要其他文字
-2. 每个元素包含code(股票代码6位数字)和name(股票名称)
-3. 按市值从大到小排列
-4. 代码必须是真实有效的A股或港股代码
+2. 每个元素包含code(股票代码，A股6位数字，港股5位数字)和name(股票名称)和market("A股"或"港股")
+3. A股龙头5-6只，港股龙头3-4只，按市值从大到小排列
+4. 代码必须是真实有效的股票代码
+5. A股属于申万"{industry}"一级行业分类的龙头；港股属于恒生对应行业分类的龙头
 
 示例格式：
-[{{"code": "600519", "name": "贵州茅台"}}, {{"code": "000858", "name": "五粮液"}}]"""
+[{{"code": "002230", "name": "科大讯飞", "market": "A股"}}, {{"code": "00700", "name": "腾讯控股", "market": "港股"}}]"""
 
             data = {
-                "model": "deepseek-v4-pro",
+                "model": "deepseek-chat",
                 "messages": [
                     {"role": "system", "content": "你是股票数据库，只返回JSON数据，不要其他文字。"},
                     {"role": "user", "content": prompt}
@@ -1010,53 +1047,71 @@ class StockAnalyzer:
             if resp.status_code == 200:
                 content = resp.json()['choices'][0]['message']['content'].strip()
                 # 提取JSON
-                if '```' in content:
-                    content = re.search(r'\[.*\]', content, re.DOTALL).group(0)
+                json_match = re.search(r'\[.*\]', content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(0)
                 
                 leaders = json.loads(content)
                 print(f"[行业龙头-AI] 获取到 {len(leaders)} 只")
                 
-                # 获取实时价格
+                # 批量获取实时价格（腾讯API支持多代码查询）
+                stock_codes_for_tencent = []
+                for item in leaders[:limit]:
+                    code = str(item.get('code', '')).zfill(5) if item.get('market') == '港股' else str(item.get('code', ''))
+                    if not code:
+                        continue
+                    if len(code) == 5:
+                        tc = f"hk{code}"
+                    elif code.startswith('6'):
+                        tc = f"sh{code}"
+                    elif code.startswith(('0', '3')):
+                        tc = f"sz{code}"
+                    elif code.startswith(('8', '4', '9')):
+                        tc = f"bj{code}"
+                    else:
+                        tc = f"sz{code}"
+                    stock_codes_for_tencent.append((code, tc, item))
+                
+                # 批量请求价格
+                price_map = {}
+                if stock_codes_for_tencent:
+                    codes_str = ','.join(tc for _, tc, _ in stock_codes_for_tencent)
+                    try:
+                        price_url = f"http://qt.gtimg.cn/q={codes_str}"
+                        pr = requests.get(price_url, timeout=8)
+                        pr.encoding = 'utf-8'
+                        if pr.status_code == 200:
+                            for code, tc, _ in stock_codes_for_tencent:
+                                # 腾讯API每条数据以分号分隔
+                                pattern = rf'v_{tc}="([^"]*)"'
+                                match = re.search(pattern, pr.text)
+                                if match and '~' in match.group(1):
+                                    parts = match.group(1).split('~')
+                                    if len(parts) > 5:
+                                        price = self._safe_float(parts[3])
+                                        prev_close = self._safe_float(parts[4])
+                                        change_pct = round((price - prev_close) / prev_close * 100, 2) if price > 0 and prev_close > 0 else 0
+                                        price_map[code] = (price, change_pct)
+                    except Exception as e:
+                        print(f"[行业龙头-价格] 批量获取失败: {e}")
+                
+                # 组装结果
                 stocks = []
                 for item in leaders[:limit]:
-                    code = str(item.get('code', ''))
+                    code = str(item.get('code', '')).zfill(5) if item.get('market') == '港股' else str(item.get('code', ''))
                     name = item.get('name', '')
+                    market = item.get('market', '')
                     if not code:
                         continue
                     
-                    # 获取价格
-                    price = 0
-                    change_pct = 0
-                    try:
-                        if len(code) == 5:
-                            tc = f"hk{code}"
-                        elif code.startswith('6'):
-                            tc = f"sh{code}"
-                        elif code.startswith(('0', '3')):
-                            tc = f"sz{code}"
-                        elif code.startswith(('8', '4', '9')):
-                            tc = f"bj{code}"
-                        else:
-                            tc = f"sz{code}"
-                        
-                        price_url = f"http://qt.gtimg.cn/q={tc}"
-                        pr = requests.get(price_url, timeout=5)
-                        pr.encoding = 'utf-8'
-                        if pr.status_code == 200 and '~' in pr.text:
-                            parts = pr.text.split('~')
-                            if len(parts) > 5:
-                                price = self._safe_float(parts[3])
-                                prev_close = self._safe_float(parts[4])
-                                if price > 0 and prev_close > 0:
-                                    change_pct = round((price - prev_close) / prev_close * 100, 2)
-                    except:
-                        pass
+                    price, change_pct = price_map.get(code, (0, 0))
                     
                     stocks.append({
                         'code': code,
                         'name': name,
                         'price': price,
                         'change_pct': change_pct,
+                        'market': market,
                         'industry': industry or '未知'
                     })
                 
@@ -1069,7 +1124,7 @@ class StockAnalyzer:
         print(f"[行业龙头] AI获取失败，使用降级方案")
         if industry and industry in self.INDUSTRY_LEADERS:
             filtered = [s for s in self.INDUSTRY_LEADERS[industry] if s['code'] != self.stock_code]
-            return [{'code': s['code'], 'name': s['name'], 'price': 0, 'change_pct': 0, 'industry': industry} for s in filtered[:limit]]
+            return [{'code': s['code'], 'name': s['name'], 'price': 0, 'change_pct': 0, 'market': 'A股', 'industry': industry} for s in filtered[:limit]]
         
         return []
     
