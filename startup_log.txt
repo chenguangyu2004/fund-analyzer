@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "h:\基金app\app.py", line 2, in <module>
-    from fund_analyzer import FundAnalyzer
-  File "h:\基金app\fund_analyzer.py", line 658
-    continue
-    ^^^^^^^^
-SyntaxError: 'continue' not properly in loop
