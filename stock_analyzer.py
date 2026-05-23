@@ -297,9 +297,8 @@ class StockAnalyzer:
         news = self.get_stock_news(10)
         result['news'] = news
         
-        # 获取行业龙头股
-        industry = result.get('industry', '')
-        leaders = self._get_industry_stocks(industry, 10)
+        # 获取行业龙头股（使用AI动态搜索）
+        leaders = self.get_industry_leaders(10)
         result['industry_leaders'] = leaders
         
         # 获取财务数据
@@ -690,7 +689,7 @@ class StockAnalyzer:
         }
     
     def get_stock_news(self, limit=10):
-        """获取股票相关新闻 - 只获取公司公告和个股资讯"""
+        """获取股票相关新闻 - 爬取新浪财经最近5天的内容"""
         news_list = []
         code = self.stock_code
         stock_name = ''
@@ -718,42 +717,70 @@ class StockAnalyzer:
         except:
             pass
         
-        # 1. 东方财富公司公告（最权威，最相关）
+        # 计算5天前的日期
+        from datetime import timedelta
+        five_days_ago = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
+        
+        # 1. 新浪财经个股新闻（主要来源）
         try:
-            if code.startswith('6'):
-                secid = f"1.{code}"
-            elif code.startswith('0') or code.startswith('3'):
-                secid = f"0.{code}"
-            elif len(code) == 5:
-                secid = f"116.{code}"
-            else:
-                secid = f"0.{code}"
-            
-            url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={limit}&page_index=1&ann_type=SHA%2CSZA&client_source=web&stock_list={secid}'
+            keyword = stock_name or code
+            # 新浪财经搜索API
+            url = f"https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k={keyword}&num={limit}&page=1&r=0.5"
             headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Referer': 'https://data.eastmoney.com/'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://finance.sina.com.cn/'
             }
-            
             response = self.session.get(url, headers=headers, timeout=8)
             if response.status_code == 200:
                 data = response.json()
-                if data and data.get('data'):
-                    items = data['data'].get('list', []) or []
-                    print(f"[东方财富公告] 获取到 {len(items)} 条")
-                    for item in items[:limit]:
+                items = data.get('result', {}).get('data', [])
+                print(f"[新浪新闻] 获取到 {len(items)} 条")
+                for item in items:
+                    title = item.get('title', '')
+                    ctime = item.get('ctime', '')
+                    # 过滤最近5天的新闻
+                    if ctime and ctime >= five_days_ago:
                         news_list.append({
-                            'title': item.get('title', '') or item.get('notice_title', ''),
-                            'publish_time': item.get('publish_time', ''),
-                            'source': '东方财富',
-                            'type': '公告',
-                            'art_id': item.get('notice_id', '')
+                            'title': title,
+                            'publish_time': ctime,
+                            'source': '新浪财经',
+                            'type': '新闻',
+                            'url': item.get('url', '')
                         })
         except Exception as e:
-            print(f"[东方财富公告] 获取失败: {e}")
+            print(f"[新浪新闻] 获取失败: {e}")
         
-        # 2. 东方财富个股资讯（特定于该股票）
-        if len(news_list) < 5:
+        # 2. 新浪财经-个股专区新闻
+        if len(news_list) < limit:
+            try:
+                keyword = stock_name or code
+                # 新浪财经另一个搜索接口
+                url = f"https://search.sina.com.cn/news/q={keyword}&range=all&c=news&sort=time&num={limit}&page=1"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': 'https://search.sina.com.cn/'
+                }
+                response = self.session.get(url, headers=headers, timeout=8)
+                if response.status_code == 200:
+                    # 解析HTML结果
+                    resp_text = response.text
+                    # 匹配新闻条目
+                    news_matches = re.findall(r'<h2><a[^>]*href="([^"]*)"[^>]*>([^<]*)</a></h2>.*?<span class="fgray_time">([^<]*)</span>', resp_text, re.DOTALL)
+                    print(f"[新浪搜索] 获取到 {len(news_matches)} 条")
+                    for url_item, title, pub_time in news_matches:
+                        if title and (not pub_time or pub_time >= five_days_ago or len(pub_time) < 10):
+                            news_list.append({
+                                'title': title.strip(),
+                                'publish_time': pub_time.strip() if pub_time else '',
+                                'source': '新浪财经',
+                                'type': '新闻',
+                                'url': url_item
+                            })
+            except Exception as e:
+                print(f"[新浪搜索] 获取失败: {e}")
+        
+        # 3. 东方财富公司公告（权威补充）
+        if len(news_list) < limit:
             try:
                 if code.startswith('6'):
                     secid = f"1.{code}"
@@ -764,7 +791,7 @@ class StockAnalyzer:
                 else:
                     secid = f"0.{code}"
                 
-                url = f'https://np-listapi.eastmoney.com/comm/web/getNaviNews?client=web&navi=stock&scodes={secid}&fields=ID,TITLE,NOTICETIME,TYPES&pageindex=0&pagesize={limit}'
+                url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={limit}&page_index=1&ann_type=SHA%2CSZA&client_source=web&stock_list={secid}'
                 headers = {
                     'User-Agent': 'Mozilla/5.0',
                     'Referer': 'https://data.eastmoney.com/'
@@ -773,50 +800,23 @@ class StockAnalyzer:
                 response = self.session.get(url, headers=headers, timeout=8)
                 if response.status_code == 200:
                     data = response.json()
-                    items = data.get('data', {}).get('newsList', []) or []
-                    print(f"[东方财富资讯] 获取到 {len(items)} 条")
-                    for item in items[:limit]:
-                        news_list.append({
-                            'title': item.get('TITLE', ''),
-                            'publish_time': item.get('NOTICETIME', ''),
-                            'source': '东方财富',
-                            'type': '资讯',
-                            'art_id': item.get('ID', '')
-                        })
+                    if data and data.get('data'):
+                        items = data['data'].get('list', []) or []
+                        print(f"[东方财富公告] 获取到 {len(items)} 条")
+                        for item in items:
+                            title = item.get('title', '') or item.get('notice_title', '')
+                            pub_time = str(item.get('publish_time', ''))
+                            # 过滤最近5天
+                            if pub_time and pub_time >= five_days_ago:
+                                news_list.append({
+                                    'title': title,
+                                    'publish_time': pub_time,
+                                    'source': '东方财富',
+                                    'type': '公告',
+                                    'art_id': item.get('notice_id', '')
+                                })
             except Exception as e:
-                print(f"[东方财富资讯] 获取失败: {e}")
-        
-        # 3. 如果还是没有，使用东方财富搜索API获取个股新闻
-        if len(news_list) < 3:
-            try:
-                keyword = stock_name or code
-                url = f'https://search-api-web.eastmoney.com/search/jsonp?cb=jQuery&param={{%22uid%22%3A%22%22%2C%22keyword%22%3A%22{keyword}%22%2C%22type%22%3A[%22cmsArticleWebOld%22]%2C%22client%22%3A%22web%22%2C%22clientType%22%3A%22web%22%2C%22clientVersion%22%3A%22curr%22%2C%22param%22%3A{{%22cmsArticleWebOld%22:{{%22searchScope%22%3A%22default%22%2C%22sort%22%3A%22default%22%2C%22pageIndex%22%3A1%2C%22pageSize%22%3A{limit}}}}}}}'
-                headers = {
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://so.eastmoney.com/'
-                }
-                response = self.session.get(url, headers=headers, timeout=8)
-                if response.status_code == 200:
-                    text = response.text
-                    # 解析JSONP
-                    start = text.index('(') + 1
-                    end = text.rindex(')')
-                    json_str = text[start:end]
-                    data = json.loads(json_str)
-                    items = data.get('data', {}).get('cmsArticleWebOld', {}).get('list', [])
-                    print(f"[东方财富搜索] 获取到 {len(items)} 条")
-                    for item in items[:limit]:
-                        title = item.get('title', '') or item.get('articleTitle', '')
-                        if title:
-                            news_list.append({
-                                'title': title,
-                                'publish_time': item.get('date', item.get('showDate', '')),
-                                'source': '东方财富',
-                                'type': '资讯',
-                                'art_id': item.get('id', item.get('articleId', ''))
-                            })
-            except Exception as e:
-                print(f"[东方财富搜索] 获取失败: {e}")
+                print(f"[东方财富公告] 获取失败: {e}")
         
         # 去重
         seen_titles = set()
@@ -827,7 +827,7 @@ class StockAnalyzer:
                 seen_titles.add(title)
                 unique_news.append(news)
         
-        print(f"[新闻] 最终返回 {len(unique_news)} 条")
+        print(f"[新闻] 最终返回 {len(unique_news)} 条（最近5天）")
         return unique_news[:limit]
     
     def _get_industry_stocks(self, industry, limit=10):
@@ -944,9 +944,134 @@ class StockAnalyzer:
         return stocks[:limit]
     
     def get_industry_leaders(self, limit=10):
-        """获取行业龙头股 - 公开接口"""
+        """获取行业龙头股 - 使用AI动态搜索"""
         industry = self._get_stock_industry()
-        return self._get_industry_stocks(industry, limit)
+        stock_name = ''
+        
+        # 获取股票名称
+        try:
+            code = self.stock_code
+            if code.startswith('6'):
+                symbol = f"sh{code}"
+            elif code.startswith('0') or code.startswith('3'):
+                symbol = f"sz{code}"
+            elif len(code) == 5:
+                symbol = f"hk{code.zfill(5)}"
+            else:
+                symbol = f"sz{code}"
+            url = f'https://hq.sinajs.cn/list={symbol}'
+            headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'}
+            resp = self.session.get(url, headers=headers, timeout=5)
+            resp.encoding = 'gbk'
+            if resp.status_code == 200:
+                match = re.search(r'["\']([^"\']+)["\']', resp.text)
+                if match:
+                    stock_name = match.group(1).split(',')[0] if ',' in match.group(1) else match.group(1)
+        except:
+            pass
+        
+        # 使用AI API获取行业龙头股
+        try:
+            from deepseek_analyzer import DeepSeekAnalyzer
+            import os
+            api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+            analyzer = DeepSeekAnalyzer(api_key)
+            
+            prompt = f"""请列出"{industry or stock_name or self.stock_code}"行业的{limit}只龙头股。
+要求：
+1. 只返回JSON数组，不要其他文字
+2. 每个元素包含code(股票代码6位数字)和name(股票名称)
+3. 按市值从大到小排列
+4. 代码必须是真实有效的A股或港股代码
+
+示例格式：
+[{{"code": "600519", "name": "贵州茅台"}}, {{"code": "000858", "name": "五粮液"}}]"""
+
+            data = {
+                "model": "deepseek-v4-pro",
+                "messages": [
+                    {"role": "system", "content": "你是股票数据库，只返回JSON数据，不要其他文字。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1000
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            resp = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers=headers, json=data, timeout=30
+            )
+            
+            if resp.status_code == 200:
+                content = resp.json()['choices'][0]['message']['content'].strip()
+                # 提取JSON
+                if '```' in content:
+                    content = re.search(r'\[.*\]', content, re.DOTALL).group(0)
+                
+                leaders = json.loads(content)
+                print(f"[行业龙头-AI] 获取到 {len(leaders)} 只")
+                
+                # 获取实时价格
+                stocks = []
+                for item in leaders[:limit]:
+                    code = str(item.get('code', ''))
+                    name = item.get('name', '')
+                    if not code:
+                        continue
+                    
+                    # 获取价格
+                    price = 0
+                    change_pct = 0
+                    try:
+                        if len(code) == 5:
+                            tc = f"hk{code}"
+                        elif code.startswith('6'):
+                            tc = f"sh{code}"
+                        elif code.startswith(('0', '3')):
+                            tc = f"sz{code}"
+                        elif code.startswith(('8', '4', '9')):
+                            tc = f"bj{code}"
+                        else:
+                            tc = f"sz{code}"
+                        
+                        price_url = f"http://qt.gtimg.cn/q={tc}"
+                        pr = requests.get(price_url, timeout=5)
+                        pr.encoding = 'utf-8'
+                        if pr.status_code == 200 and '~' in pr.text:
+                            parts = pr.text.split('~')
+                            if len(parts) > 5:
+                                price = self._safe_float(parts[3])
+                                prev_close = self._safe_float(parts[4])
+                                if price > 0 and prev_close > 0:
+                                    change_pct = round((price - prev_close) / prev_close * 100, 2)
+                    except:
+                        pass
+                    
+                    stocks.append({
+                        'code': code,
+                        'name': name,
+                        'price': price,
+                        'change_pct': change_pct,
+                        'industry': industry or '未知'
+                    })
+                
+                if stocks:
+                    return stocks
+        except Exception as e:
+            print(f"[行业龙头-AI] 获取失败: {e}")
+        
+        # AI失败时，使用硬编码数据作为降级方案
+        print(f"[行业龙头] AI获取失败，使用降级方案")
+        if industry and industry in self.INDUSTRY_LEADERS:
+            filtered = [s for s in self.INDUSTRY_LEADERS[industry] if s['code'] != self.stock_code]
+            return [{'code': s['code'], 'name': s['name'], 'price': 0, 'change_pct': 0, 'industry': industry} for s in filtered[:limit]]
+        
+        return []
     
     def get_kline_data(self, period='daily', limit=60):
         """
