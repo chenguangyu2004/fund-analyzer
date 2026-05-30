@@ -432,35 +432,57 @@ class MultiFactorModel:
             if len(parts) < 50:
                 return
 
-            # 腾讯API字段映射
-            pe = self._safe_float(parts[39])     # PE_TTM
-            pb = self._safe_float(parts[46])     # PB
-            mcap = self._safe_float(parts[44])   # 总市值(亿)
-            eps = self._safe_float(parts[53]) if len(parts) > 53 else None
-            roe_est = self._safe_float(parts[52]) if len(parts) > 52 else None
+            is_hk = len(code) == 5
+            # 腾讯API字段映射（A股/港股不同）
+            pe = self._safe_float(parts[39])     # PE_TTM (A股+港股通用)
+            mcap = self._safe_float(parts[44])   # 总市值(亿) (通用)
+            # PB: A股[46], 港股[46]是股票代号 → 用市值反推
+            pb = None
+            if not is_hk:
+                pb = self._safe_float(parts[46])
+            # 港股股息率在[72]
+            dividend = self._safe_float(parts[72] if is_hk else parts[56]) if len(parts) > max(56, 72) else None
 
-            detail['pe_ttm'] = pe if pe > 0 else None
-            detail['pb_ttm'] = pb if pb > 0 else None
-            detail['market_cap'] = mcap if mcap > 0 else None
+            # PE为负说明亏损，保留原值供参考但标记
+            detail['pe_ttm'] = pe if pe and pe > 0 else None
+            detail['pb_ttm'] = pb if pb and pb > 0 else None
+            detail['market_cap'] = mcap if mcap and mcap > 0 else None
+            if dividend and dividend > 0 and dividend < 1:
+                detail['dividend_yield'] = dividend
             detail['data_source'] = 'tencent'
 
-            # 推算ROE: ROE ≈ PB / PE (适用于稳定盈利企业)
-            if pe and pb and pe > 0 and pb > 0:
+            # ROE: A股 PB/PE推算，港股从行业基准调整
+            bench = INDUSTRY_BENCHMARKS.get(detail.get('industry', ''), {})
+            if not is_hk and pe and pb and pe > 0 and pb > 0:
                 derived_roe = pb / pe
-                # 合理性校验：ROE应在1%~60%之间
                 if 0.01 <= derived_roe <= 0.60:
                     detail['roe'] = round(derived_roe, 4)
-                elif roe_est and 0.01 <= roe_est <= 0.80:
-                    detail['roe'] = roe_est
-            elif roe_est and 0 < roe_est < 1:
-                detail['roe'] = roe_est
+            elif is_hk and pe and pe > 0:
+                roe_bench = bench.get('roe_median', 0.10)
+                pe_bench = bench.get('pe_median', 25)
+                if pe_bench and pe_bench > 0:
+                    detail['roe'] = round(roe_bench * pe_bench / pe, 4)
+                else:
+                    detail['roe'] = round(roe_bench, 4)
+            elif pe and pe < 0:
+                # 亏损企业：使用行业基准ROE并打折
+                roe_bench = bench.get('roe_median', 0.08)
+                detail['roe'] = round(roe_bench * 0.4, 4)  # 亏损企业ROE打折40%
 
-            # 推算净利润增速（用EPS变化或取默认值）
-            # 从52周高低位推算营收趋势
-            high52 = self._safe_float(parts[47])
-            low52 = self._safe_float(parts[48])
+            # 港股PB: PB = PE × ROE (从已有数据反推)
+            if is_hk and detail.get('roe') and detail.get('pe_ttm'):
+                pb_est = detail['pe_ttm'] * detail['roe']
+                if 0.1 <= pb_est <= 30:
+                    detail['pb_ttm'] = round(pb_est, 2)
+            elif is_hk and detail.get('roe'):
+                # 只有ROE时用行业PB中位数
+                detail['pb_ttm'] = bench.get('pb_median', 2.0) if bench else 2.0
+
+            # 营收趋势（从52周高低位推算）
+            high52 = self._safe_float(parts[48])
+            low52 = self._safe_float(parts[49])
             if high52 and low52 and low52 > 0:
-                detail['revenue_growth'] = round((high52 / low52 - 1) * 0.5, 4)  # 保守估计
+                detail['revenue_growth'] = round((high52 / low52 - 1) * 0.5, 4)
 
             # PE分位数估算
             if pe and pe > 0:
