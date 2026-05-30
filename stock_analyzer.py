@@ -81,8 +81,8 @@ class StockAnalyzer:
         if holder_analysis:
             result['holder_analysis'] = holder_analysis
         
-        # 获取新闻
-        news = self.get_stock_news(10)
+        # 获取新闻（至少 15 条，保证丰富度）
+        news = self.get_stock_news(20)
         result['news'] = news
         
         # 获取行业龙头股（使用AI动态搜索）
@@ -803,6 +803,31 @@ class StockAnalyzer:
             logger.info(f"[行业股票] 未找到行业 '{industry}'")
             return []
         
+        # 兜底：对价格为0的股票逐一通过腾讯API获取
+        for s in stocks:
+            if s['price'] == 0 and s['code']:
+                try:
+                    code = s['code']
+                    if len(code) == 5:
+                        tc = f"hk{code.zfill(5)}"
+                    elif code.startswith('6'):
+                        tc = f"sh{code}"
+                    elif code.startswith(('0', '3')):
+                        tc = f"sz{code}"
+                    else:
+                        tc = f"sz{code}"
+                    import requests as _req
+                    resp = _req.get(f"http://qt.gtimg.cn/q={tc}", timeout=3,
+                                    headers={'User-Agent': 'Mozilla/5.0'})
+                    if resp.status_code == 200 and '~' in resp.text:
+                        parts = resp.text.split('~')
+                        if len(parts) > 5:
+                            s['price'] = self._safe_float(parts[3])
+                            prev = self._safe_float(parts[4])
+                            if s['price'] > 0 and prev > 0:
+                                s['change_pct'] = round((s['price'] - prev) / prev * 100, 2)
+                except Exception:
+                    pass
         return stocks[:limit]
     
     def get_industry_leaders(self, limit=10):
