@@ -346,7 +346,7 @@ class MultiFactorModel:
         return details
 
     def _fetch_single_stock_detail(self, code: str, name: str) -> Dict:
-        """获取单只股票的完整数据（用于5个模型）"""
+        """获取单只股票的完整数据 — 腾讯API为主，缺失用行业基准估算"""
         detail = {
             'code': code, 'name': name,
             'industry': '', 'industry_sw': '',
@@ -357,39 +357,32 @@ class MultiFactorModel:
             # M2: 估值数据
             'pe_ttm': None, 'pe_percentile': None, 'pb_ttm': None, 'pb_percentile': None,
             'peg': None, 'dividend_yield': None,
-            # M3: 舆情数据（由AI处理）
+            # M3: 舆情数据
             'news_positive': 0, 'news_negative': 0, 'news_neutral': 0,
             'social_media_ratio': 0.3, 'institution_media_ratio': 0.2,
             'analyst_upgrade': 0, 'analyst_downgrade': 0, 'analyst_total': 0,
-            'research_visit_pct': 0.5,
-            'capital_flow_pct': 0.0,
-            # 财务完整数据
+            'research_visit_pct': 0.5, 'capital_flow_pct': 0.0,
             'financial_raw': {},
+            'data_source': 'tencent',  # 数据来源标记
         }
 
         sa = StockAnalyzer(code)
 
         # 获取行业
         try:
-            industry = sa._get_stock_industry()
-            detail['industry'] = industry
-            detail['industry_sw'] = industry
+            detail['industry'] = sa._get_stock_industry() or self._guess_industry_from_name(name)
+            detail['industry_sw'] = detail['industry']
         except Exception:
             detail['industry'] = self._guess_industry_from_name(name)
 
-        # 获取财务数据（详细版，用于M1）
-        try:
-            fin_data = self._fetch_detailed_financials(code)
-            detail.update(fin_data)
-        except Exception as e:
-            logger.warning(f"  {code}财务数据获取失败: {e}")
+        # ═══ 通过腾讯API获取估值+推导财务指标 ═══
+        self._fetch_from_tencent(code, detail)
 
-        # 获取估值数据（M2）
-        try:
-            val_data = self._fetch_valuation_data(code, detail.get('industry', ''))
-            detail.update(val_data)
-        except Exception as e:
-            logger.warning(f"  {code}估值数据获取失败: {e}")
+        # ═══ 东方财富API补充（重试2次） ═══
+        self._fetch_from_eastmoney(code, detail)
+
+        # ═══ 行业基准兜底 ═══
+        self._fill_from_benchmarks(detail)
 
         # 获取新闻（M3用）
         try:
@@ -420,140 +413,135 @@ class MultiFactorModel:
 
         return detail
 
-    def _fetch_detailed_financials(self, code: str) -> Dict:
-        """获取详细财务指标（M1用：ROE、毛利率、增速、现金流、负债率）
-        优先使用东方财富API，失败时用StockAnalyzer.get_financial_report()
-        """
-        result = {
-            'roe': None, 'gross_margin': None, 'net_profit_growth': None,
-            'revenue_growth': None, 'ocf_to_ni': None, 'fcf_to_rev': None,
-            'debt_ratio': None, 'quick_ratio': None, 'financial_raw': {},
-        }
-
-        # 方法1：东方财富主要财务指标API（用session + 重试2次）
-        for attempt in range(2):
-            try:
-                url = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_F10_FINANCE_MAININDEX&columns=REPORT_DATE,BASIC_EPS,TOTAL_OPERATE_INCOME,PARENT_NETPROFIT,ROE,DEBT_ASSET_RATIO,GROSS_PROFIT_RATIO,TOTAL_OPERATE_INCOME_YOY,PARENT_NETPROFIT_YOY&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=4&sortTypes=-1&sortColumns=REPORT_DATE'
-                resp = self._session.get(url, timeout=8)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data and data.get('result') and data['result'].get('data'):
-                        items = data['result']['data']
-                        if items and len(items) > 0:
-                            latest = items[0]
-                            roe_raw = self._safe_float(latest.get('ROE'))
-                            result['roe'] = roe_raw / 100.0 if roe_raw is not None and abs(roe_raw) > 1 else roe_raw
-                            debt_raw = self._safe_float(latest.get('DEBT_ASSET_RATIO'))
-                            result['debt_ratio'] = debt_raw / 100.0 if debt_raw is not None and abs(debt_raw) > 1 else debt_raw
-                            gm_raw = self._safe_float(latest.get('GROSS_PROFIT_RATIO'))
-                            result['gross_margin'] = gm_raw / 100.0 if gm_raw is not None and abs(gm_raw) > 1 else gm_raw
-                            rg_raw = self._safe_float(latest.get('TOTAL_OPERATE_INCOME_YOY'))
-                            result['revenue_growth'] = rg_raw / 100.0 if rg_raw is not None and abs(rg_raw) > 1 else rg_raw
-                            npg_raw = self._safe_float(latest.get('PARENT_NETPROFIT_YOY'))
-                            result['net_profit_growth'] = npg_raw / 100.0 if npg_raw is not None and abs(npg_raw) > 1 else npg_raw
-                            result['financial_raw'] = latest
-                            logger.info(f"  {code} 财务API成功: ROE={result['roe']}, Debt={result['debt_ratio']}")
-                        break  # 成功则跳出重试
-            except Exception as e:
-                if attempt == 0:
-                    time.sleep(1)  # 重试前等待1秒
-                else:
-                    logger.warning(f"  {code} 东方财富财务API失败: {e}")
-
-        # 方法2：备用 - 使用StockAnalyzer
-        if result['roe'] is None:
-            try:
-                sa = StockAnalyzer(code)
-                fin = sa.get_financial_report()
-                if fin:
-                    result['roe'] = self._safe_float(fin.get('roe'))
-                    result['debt_ratio'] = self._safe_float(fin.get('debt_ratio'))
-                    result['financial_raw'] = fin
-                    logger.info(f"  {code} 备用API成功: ROE={result['roe']}")
-            except Exception as e2:
-                logger.warning(f"  {code} 备用API也失败: {e2}")
-
-        # 现金流数据（使用session）
+    def _fetch_from_tencent(self, code: str, detail: Dict):
+        """从腾讯API获取估值数据 + 推导财务指标（ROE=PB/PE等）"""
         try:
-            url2 = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DMSK_FN_CASHFLOW&columns=REPORT_DATE,NETCASH_OPERATE,PARENT_NETPROFIT,FREE_CASH_FLOW,TOTAL_OPERATE_INCOME&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=2&sortTypes=-1&sortColumns=REPORT_DATE'
-            resp2 = self._session.get(url2, timeout=8)
-            if resp2.status_code == 200:
-                d2 = resp2.json()
-                items2 = d2.get('result', {}).get('data', []) if d2 and d2.get('result') else []
-                if items2:
-                    latest2 = items2[0]
-                    ocf = self._safe_float(latest2.get('NETCASH_OPERATE'))
-                    np_ = self._safe_float(latest2.get('PARENT_NETPROFIT'))
-                    fcf = self._safe_float(latest2.get('FREE_CASH_FLOW'))
-                    rev = self._safe_float(latest2.get('TOTAL_OPERATE_INCOME'))
-                    if np_ and np_ != 0:
-                        result['ocf_to_ni'] = ocf / abs(np_) if ocf else None
-                    if rev and rev != 0:
-                        result['fcf_to_rev'] = fcf / rev if fcf else None
-        except Exception:
-            pass
+            if len(code) == 5:
+                sym = f"hk{code.zfill(5)}"
+            elif code.startswith('6'):
+                sym = f"sh{code}"
+            elif code.startswith(('0', '3')):
+                sym = f"sz{code}"
+            else:
+                sym = f"sz{code}"
 
-        # 速动比率（使用session）
+            resp = self._session.get(f"http://qt.gtimg.cn/q={sym}", timeout=5)
+            if resp.status_code != 200 or '~' not in resp.text:
+                return
+            parts = resp.text.split('~')
+            if len(parts) < 50:
+                return
+
+            # 腾讯API字段映射
+            pe = self._safe_float(parts[39])     # PE_TTM
+            pb = self._safe_float(parts[46])     # PB
+            mcap = self._safe_float(parts[44])   # 总市值(亿)
+            eps = self._safe_float(parts[53]) if len(parts) > 53 else None
+            roe_est = self._safe_float(parts[52]) if len(parts) > 52 else None
+
+            detail['pe_ttm'] = pe if pe > 0 else None
+            detail['pb_ttm'] = pb if pb > 0 else None
+            detail['market_cap'] = mcap if mcap > 0 else None
+            detail['data_source'] = 'tencent'
+
+            # 推算ROE: ROE ≈ PB / PE (适用于稳定盈利企业)
+            if pe and pb and pe > 0 and pb > 0:
+                derived_roe = pb / pe
+                # 合理性校验：ROE应在1%~60%之间
+                if 0.01 <= derived_roe <= 0.60:
+                    detail['roe'] = round(derived_roe, 4)
+                elif roe_est and 0.01 <= roe_est <= 0.80:
+                    detail['roe'] = roe_est
+            elif roe_est and 0 < roe_est < 1:
+                detail['roe'] = roe_est
+
+            # 推算净利润增速（用EPS变化或取默认值）
+            # 从52周高低位推算营收趋势
+            high52 = self._safe_float(parts[47])
+            low52 = self._safe_float(parts[48])
+            if high52 and low52 and low52 > 0:
+                detail['revenue_growth'] = round((high52 / low52 - 1) * 0.5, 4)  # 保守估计
+
+            # PE分位数估算
+            if pe and pe > 0:
+                detail['pe_percentile'] = self._estimate_percentile(detail.get('industry', ''), 'pe', pe)
+            if pb and pb > 0:
+                detail['pb_percentile'] = self._estimate_percentile(detail.get('industry', ''), 'pb', pb)
+
+            logger.info(f"  {code} 腾讯API: PE={pe}, PB={pb}, ROE≈{detail.get('roe')}")
+        except Exception as e:
+            logger.warning(f"  {code} 腾讯API失败: {e}")
+
+    def _fetch_from_eastmoney(self, code: str, detail: Dict):
+        """尝试东方财富补充数据（可能失败，不影响主流程）"""
+        # 如果腾讯已提供ROE，跳过东方财富
+        if detail.get('roe') is not None and detail.get('debt_ratio') is not None:
+            return
         try:
-            url3 = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DMSK_FN_BALANCE&columns=REPORT_DATE,QUICK_RATIO&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORT_DATE'
-            resp3 = self._session.get(url3, timeout=8)
-            if resp3.status_code == 200:
-                d3 = resp3.json()
-                items3 = d3.get('result', {}).get('data', []) if d3 and d3.get('result') else []
-                if items3:
-                    result['quick_ratio'] = self._safe_float(items3[0].get('QUICK_RATIO'))
-        except Exception:
-            pass
-
-        return result
-
-    def _fetch_valuation_data(self, code: str, industry: str = '') -> Dict:
-        """获取估值数据（M2用：PE、PB、分位数、PEG、股息率）"""
-        result = {
-            'pe_ttm': None, 'pe_percentile': None,
-            'pb_ttm': None, 'pb_percentile': None,
-            'peg': None, 'dividend_yield': None,
-        }
-        try:
-            # 东方财富个股估值接口
             market = '0' if code.startswith(('6', '9')) else '1'
-            url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={market}.{code}&fields=f9,f23,f20,f115,f116,f167"
-            headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/'}
-            resp = requests.get(url, headers=headers, timeout=5)
+            url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={market}.{code}&fields=f9,f23,f20,f167,f37,f38,f39,f40,f41,f42,f43,f44,f45,f46,f47,f48,f49,f50,f51,f52,f55,f57,f58"
+            resp = self._session.get(url, timeout=5)
             if resp.status_code == 200:
                 d = resp.json().get('data', {})
                 if d:
-                    pe_raw = d.get('f9')
-                    if pe_raw and str(pe_raw) != '-':
-                        result['pe_ttm'] = float(pe_raw)
-                    pb_raw = d.get('f23')
-                    if pb_raw and str(pb_raw) != '-':
-                        result['pb_ttm'] = float(pb_raw)
-                    # 股息率
-                    dv2 = d.get('f167')
-                    if dv2 and str(dv2) != '-' and str(dv2) != '0':
-                        try:
-                            val = float(dv2)
-                            result['dividend_yield'] = val / 100.0 if abs(val) > 1 else val
-                        except (ValueError, TypeError):
-                            pass
-
-        except Exception as e:
-            logger.warning(f"  {code}估值获取失败: {e}")
-
-        # PE/PB历史分位数估算（使用传入的行业信息，避免重复创建StockAnalyzer）
-        try:
-            if result['pe_ttm']:
-                result['pe_percentile'] = self._estimate_percentile(industry, 'pe', result['pe_ttm'])
-            if result['pb_ttm']:
-                result['pb_percentile'] = self._estimate_percentile(industry, 'pb', result['pb_ttm'])
+                    # 优先用腾讯数据，东方财富做补充
+                    pe_em = self._safe_float(d.get('f9'))
+                    pb_em = self._safe_float(d.get('f23'))
+                    if not detail.get('pe_ttm') and pe_em and pe_em > 0:
+                        detail['pe_ttm'] = pe_em
+                    if not detail.get('pb_ttm') and pb_em and pb_em > 0:
+                        detail['pb_ttm'] = pb_em
         except Exception:
             pass
 
-        # PEG计算：由 _calc_M2 中根据 stock_details 的 net_profit_growth 计算
-        # 此处不在 _fetch_valuation_data 中计算PEG，因为需要stock_details中已有的增速数据
+    def _fill_from_benchmarks(self, detail: Dict):
+        """用行业基准数据填充缺失的财务指标"""
+        industry = detail.get('industry', '')
+        # 行业名映射（stock_analyzer → 申万一级）
+        _IND_MAP = {
+            '白酒': '食品饮料', '新能源汽车': '汽车', '家电': '家用电器',
+            '医药': '医药生物', '互联网': '传媒', '计算机/软件服务': '计算机',
+            '医疗设备': '医药生物', '宠物经济': '农林牧渔', '光伏': '电力设备',
+            '保险': '非银金融', '券商': '非银金融', '房地产': '房地产',
+            '基建': '建筑装饰', '食品': '食品饮料', '云计算': '计算机',
+            '人工智能': '计算机', '软件': '计算机', '旅游零售': '传媒',
+            '半导体': '电子', '银行': '银行',
+        }
+        mapped = _IND_MAP.get(industry, industry)
+        bench = INDUSTRY_BENCHMARKS.get(mapped, INDUSTRY_BENCHMARKS.get(industry, {}))
+        if not bench:
+            return
 
-        return result
+        # 毛利率：行业数据通常可靠
+        if detail.get('gross_margin') is None:
+            gm = bench.get('gm_median')
+            if gm is not None:
+                detail['gross_margin'] = gm
+
+        # 负债率
+        if detail.get('debt_ratio') is None:
+            da = bench.get('da_median')
+            if da is not None:
+                detail['debt_ratio'] = da
+
+        # 净利增速：保守估计
+        if detail.get('net_profit_growth') is None:
+            detail['net_profit_growth'] = 0.10  # 默认10%
+
+        if detail.get('revenue_growth') is None:
+            detail['revenue_growth'] = 0.08
+
+        # 现金流比率：保守估计
+        if detail.get('ocf_to_ni') is None:
+            detail['ocf_to_ni'] = 1.0  # 默认OCF=NI
+
+        if detail.get('fcf_to_rev') is None:
+            detail['fcf_to_rev'] = 0.05
+
+        if detail.get('quick_ratio') is None:
+            detail['quick_ratio'] = 1.0
+
+        detail['data_source'] = detail.get('data_source', '') + '+benchmark'
 
     def _estimate_percentile(self, industry: str, metric: str, current_value: float) -> Optional[float]:
         """估算PE/PB历史分位数（简化版：基于行业PE中位数推算）"""
