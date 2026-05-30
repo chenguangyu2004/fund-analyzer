@@ -78,7 +78,7 @@
             transition: background var(--transition-normal), color var(--transition-normal);
         }
 
-        /* 背景装饰 */
+        /* 背景装饰 — 动态渐变网格 */
         body::before {
             content: '';
             position: fixed;
@@ -87,11 +87,274 @@
             right: 0;
             bottom: 0;
             background: 
-                radial-gradient(ellipse 80% 50% at 20% 40%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
-                radial-gradient(ellipse 60% 40% at 80% 20%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
-                radial-gradient(ellipse 50% 60% at 70% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 50%);
+                radial-gradient(ellipse 90% 60% at 15% 30%, rgba(99, 102, 241, 0.18) 0%, transparent 55%),
+                radial-gradient(ellipse 70% 50% at 85% 15%, rgba(16, 185, 129, 0.12) 0%, transparent 55%),
+                radial-gradient(ellipse 60% 70% at 75% 75%, rgba(139, 92, 246, 0.10) 0%, transparent 55%),
+                radial-gradient(ellipse 50% 40% at 50% 90%, rgba(236, 72, 153, 0.06) 0%, transparent 50%);
             pointer-events: none;
             z-index: 0;
+            animation: bgShift 20s ease-in-out infinite alternate;
+        }
+        @keyframes bgShift {
+            0% { opacity: 0.8; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
+        }
+
+        /* 网格纹理叠加 */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: 
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ===== 卡片升级：玻璃拟态 + 渐变边框 ===== */
+        .card {
+            background: linear-gradient(135deg, rgba(30,41,59,0.85), rgba(15,23,42,0.9));
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1.2);
+            position: relative;
+            overflow: hidden;
+        }
+        .card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 1px;
+            background: linear-gradient(135deg, rgba(99,102,241,0.3), transparent 40%, transparent 60%, rgba(16,185,129,0.2));
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            opacity: 0;
+            transition: opacity 0.4s;
+            pointer-events: none;
+        }
+        .card:hover {
+            transform: translateY(-3px);
+            box-shadow: 
+                0 20px 40px rgba(0,0,0,0.4),
+                0 0 0 1px rgba(99,102,241,0.15);
+            border-color: rgba(99,102,241,0.25);
+        }
+        .card:hover::after {
+            opacity: 1;
+        }
+
+        /* 顶部导航增强 */
+        .top-nav {
+            background: linear-gradient(135deg, rgba(15,23,42,0.9), rgba(30,41,59,0.85));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        /* ===== 输入框升级 ===== */
+        .input-field input {
+            background: rgba(15,23,42,0.7);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 14px 16px;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+        }
+        .input-field input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 4px rgba(99,102,241,0.12), 0 0 20px rgba(99,102,241,0.1);
+        }
+
+        /* ===== 按钮升级 ===== */
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            border-radius: 12px;
+            padding: 14px 24px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            box-shadow: 0 4px 15px rgba(99,102,241,0.3);
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(99,102,241,0.45);
+        }
+        .btn-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-radius: 12px;
+            padding: 14px 24px;
+            box-shadow: 0 4px 15px rgba(16,185,129,0.3);
+        }
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(16,185,129,0.45);
+        }
+
+        /* ===== 盈亏指标卡升级 ===== */
+        .profit-item {
+            background: rgba(15,23,42,0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 14px;
+            transition: all 0.3s ease;
+        }
+        .profit-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.3);
+        }
+        .profit-value {
+            font-size: 1.5em;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        /* ===== 基金信息卡升级 ===== */
+        .current-nav {
+            font-size: 2.2em;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, var(--text-primary), #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .meta-tag {
+            background: rgba(99,102,241,0.12);
+            border: 1px solid rgba(99,102,241,0.2);
+            border-radius: 20px;
+            padding: 5px 12px;
+            font-size: 0.75em;
+            color: #a5b4fc;
+        }
+
+        /* ===== 指标卡片升级 ===== */
+        .metric-item {
+            background: rgba(15,23,42,0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 14px;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1.2);
+        }
+        .metric-item:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 16px 32px rgba(0,0,0,0.35);
+            border-color: rgba(99,102,241,0.25);
+        }
+        .metric-value {
+            font-size: 1.5em;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        /* ===== 持仓表格升级 ===== */
+        .holdings-table th {
+            background: rgba(15,23,42,0.6);
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            padding: 14px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .holdings-table td {
+            padding: 14px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            transition: background 0.2s;
+        }
+        .holdings-table tr:hover td {
+            background: rgba(99,102,241,0.06);
+        }
+
+        /* ===== 图表卡片 ===== */
+        .chart-container {
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* ===== 开关切换增强 ===== */
+        .chart-toggle {
+            border-radius: 20px;
+            padding: 8px 16px;
+            font-weight: 500;
+            transition: all 0.25s ease;
+        }
+        .chart-toggle.active {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            box-shadow: 0 4px 12px rgba(99,102,241,0.35);
+        }
+
+        /* ===== 已保存基金列表 ===== */
+        .saved-fund-item {
+            background: rgba(15,23,42,0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 14px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .saved-fund-item:hover {
+            background: rgba(99,102,241,0.1);
+            border-color: rgba(99,102,241,0.3);
+            transform: translateX(4px);
+        }
+
+        /* ===== 入场动画 ===== */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .card {
+            animation: fadeInUp 0.5s ease both;
+        }
+        .card:nth-child(1) { animation-delay: 0.05s; }
+        .card:nth-child(2) { animation-delay: 0.10s; }
+        .card:nth-child(3) { animation-delay: 0.15s; }
+        .card:nth-child(4) { animation-delay: 0.20s; }
+
+        /* ===== 加载动画 ===== */
+        .loading .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid rgba(99,102,241,0.15);
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            box-shadow: 0 0 20px rgba(99,102,241,0.3);
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading .progress-fill {
+            background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899);
+            border-radius: 4px;
+            animation: shimmer 2s ease-in-out infinite;
+        }
+        @keyframes shimmer {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* ===== 数字跳动 ===== */
+        @keyframes numberPop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.08); }
+            100% { transform: scale(1); }
+        }
+        .number-animate {
+            animation: numberPop 0.4s ease;
+        }
+
+        /* ===== Toast消息增强 ===== */
+        .toast {
+            background: linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.95));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 14px;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.5);
         }
 
         .container {
