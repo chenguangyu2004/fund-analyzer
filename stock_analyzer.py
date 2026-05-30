@@ -367,98 +367,67 @@ class StockAnalyzer:
         return result
     
     def _get_stock_industry_impl(self):
-        """获取股票所属行业 - 优先从东方财富获取申万行业分类"""
+        """获取股票所属行业 — 本地缓存优先，避免重复API调用"""
         code = self.stock_code
         
-        # 1. 优先从东方财富获取行业信息（最准确）
-        try:
-            if code.startswith('6'):
-                secid = f"1.{code}"
-            elif code.startswith('0') or code.startswith('3'):
-                secid = f"0.{code}"
-            elif code.startswith(('8', '4', '9')):
-                secid = f"0.{code}"
-            else:
-                secid = f"0.{code}"
-            
-            url = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f100'
-            headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Referer': 'https://finance.eastmoney.com/'
-            }
-            response = self.session.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and data.get('data'):
-                    industry_em = data['data'].get('f100', '')  # 东方财富行业
-                    if industry_em:
-                        logger.info(f"[行业识别] 东方财富行业: {industry_em}")
-                        # 映射东方财富行业到我们的分类
-                        industry_mapping = {
-                            '计算机': '计算机/软件服务', '软件': '计算机/软件服务', 'IT服务': '计算机/软件服务',
-                            '互联网': '互联网', '传媒': '互联网',
-                            '新能源': '新能源汽车', '汽车': '新能源汽车', '电动车': '新能源汽车',
-                            '白酒': '白酒', '啤酒': '白酒',
-                            '银行': '银行',
-                            '保险': '保险',
-                            '医药': '医药', '中药': '医药', '生物': '医药',
-                            '医疗器械': '医疗设备',
-                            '光伏': '光伏', '太阳能': '光伏',
-                            '云计算': '计算机/软件服务', '大数据': '计算机/软件服务',
-                            '宠物': '宠物经济',
-                            '半导': '半导体', '芯片': '半导体', '集成电路': '半导体',
-                            '通信': '互联网', '电子': '半导体',
-                            '游戏': '互联网',
-                            '家电': '家电',
-                            '食品': '食品',
-                            '房地产': '房地产',
-                            '证券': '券商', '券商': '券商',
-                            '基建': '基建', '建筑': '基建',
-                        }
-                        for keyword, ind in industry_mapping.items():
-                            if keyword in industry_em:
-                                return ind
-                        # 如果没有匹配到映射，直接使用东方财富的行业名称
-                        return industry_em
-        except Exception as e:
-            logger.info(f"[行业识别] EM接口失败: {e}")
-        
-        # 2. 从映射表获取
+        # 1. 从本地映射表获取（毫秒级）
         industry = self.STOCK_INDUSTRY_MAP.get(code, '')
         if industry:
             return industry
-        
-        # 3. 根据公司名称关键词匹配行业
-        stock_name = ''
+
+        # 2. 获取股票名称（优先用缓存）
+        stock_name = self._stock_name_cache
+        if not stock_name:
+            try:
+                # 确定symbol
+                if len(code) == 5:
+                    symbol = f"hk{code.zfill(5)}"
+                elif code.startswith('6'):
+                    symbol = f"sh{code}"
+                elif code.startswith(('0', '3')):
+                    symbol = f"sz{code}"
+                else:
+                    symbol = f"sz{code}"
+                url = f'https://hq.sinajs.cn/list={symbol}'
+                resp = self.session.get(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'}, timeout=3)
+                resp.encoding = 'gbk'
+                if resp.status_code == 200:
+                    m = re.search(r'["\']([^"\']+)["\']', resp.text)
+                    if m:
+                        stock_name = m.group(1).split(',')[0] if ',' in m.group(1) else m.group(1)
+                        self._stock_name_cache = stock_name
+            except Exception:
+                pass
+
+        # 3. 关键词匹配（毫秒级）
+        if stock_name:
+            for keyword, ind in self.INDUSTRY_KEYWORDS.items():
+                if keyword in stock_name:
+                    logger.info(f"[行业识别] {stock_name} → {keyword} → {ind}")
+                    return ind
+
+        # 4. 东方财富API兜底（可能慢，但前面已尽力）
         try:
             if code.startswith('6'):
-                symbol = f"sh{code}"
-            elif code.startswith('0') or code.startswith('3'):
-                symbol = f"sz{code}"
+                secid = f"1.{code}"
+            elif code.startswith(('0', '3')):
+                secid = f"0.{code}"
             else:
-                symbol = f"sz{code}"
-            
-            url = f'https://hq.sinajs.cn/list={symbol}'
-            headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Referer': 'https://finance.sina.com.cn',
-            }
-            response = self.session.get(url, headers=headers, timeout=5)
-            response.encoding = 'gbk'
-            
-            if response.status_code == 200:
-                match = re.search(r'["\']([^"\']+)["\']', response.text)
-                if match:
-                    stock_name = match.group(1).split(',')[0] if ',' in match.group(1) else match.group(1)
-                    logger.info(f"[行业识别] 股票名称: {stock_name}")
-                    for keyword, ind in self.INDUSTRY_KEYWORDS.items():
-                        if keyword in stock_name:
-                            logger.info(f"[行业识别] 匹配成功: {keyword} -> {ind}")
+                secid = f"0.{code}"
+            url = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f100'
+            resp = self.session.get(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.eastmoney.com/'}, timeout=3)
+            if resp.status_code == 200:
+                d = resp.json().get('data', {})
+                if d and d.get('f100'):
+                    logger.info(f"[行业识别] 东方财富: {d['f100']}")
+                    em = d['f100']
+                    for kw, ind in self.INDUSTRY_KEYWORDS.items():
+                        if kw in em:
                             return ind
-        except Exception as e:
-            logger.info(f"[行业识别] 获取名称失败: {e}")
-        
-        logger.info(f"[行业识别] 无法识别 {code} ({stock_name}) 的行业")
+                    return em
+        except Exception:
+            pass
+
         return ''
     
     def _get_holder_analysis(self):
