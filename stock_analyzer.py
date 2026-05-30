@@ -81,12 +81,12 @@ class StockAnalyzer:
         if holder_analysis:
             result['holder_analysis'] = holder_analysis
         
-        # 获取新闻（至少 15 条，保证丰富度）
-        news = self.get_stock_news(20)
+        # 获取新闻（尽可能多，前端截断）
+        news = self.get_stock_news(30)
         result['news'] = news
         
-        # 获取行业龙头股（使用AI动态搜索）
-        leaders = self.get_industry_leaders(10)
+        # 获取行业龙头股（全部返回，前端分A股/港股展示）
+        leaders = self.get_industry_leaders(20)
         result['industry_leaders'] = leaders
         
         # 获取财务数据
