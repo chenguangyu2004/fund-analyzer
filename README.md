@@ -100,7 +100,7 @@ python app.py
 | `/dashboard` | GET | 独立仪表盘页面 |
 | `/api/analyze` | POST | 基金基础分析（信息、盈亏、持仓） |
 | `/api/ai-analyze` | POST | **AI多因子透视诊断**（五模型评分+AI解读） |
-| `/api/multifactor-diagnosis` | POST | 多因子诊断（同ai-analyze） |
+
 | `/api/stock/<code>` | GET | 股票详情 |
 | `/api/stock/<code>/kline` | GET | 股票K线数据 |
 | `/api/market-overview` | GET | 市场概况 |

@@ -11,6 +11,10 @@ __pycache__/
 # 日志文件
 debug.log
 *.log
+logs/
+
+# 数据刷新标记
+data/.industry_last_refresh
 
 # IDE配置
 .idea/

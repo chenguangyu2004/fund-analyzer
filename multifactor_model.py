@@ -14,68 +14,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fund_analyzer import FundAnalyzer
 from stock_analyzer import StockAnalyzer
 from deepseek_analyzer import DeepSeekAnalyzer
+from logger import get_logger
+import config
 
-def log(msg):
-    try:
-        print(f"[多因子] {msg}", flush=True)
-    except Exception:
-        pass
+logger = get_logger("multifactor")
 
-# ── 行业基准数据（申万一级，2025年报） ──
-INDUSTRY_BENCHMARKS = {
-    '食品饮料': {'roe_median': 0.158, 'gm_median': 0.486, 'da_median': 0.321, 'pe_median': 25.3, 'gm_p75': 0.65, 'da_p90': 0.55},
-    '医药生物': {'roe_median': 0.082, 'gm_median': 0.523, 'da_median': 0.317, 'pe_median': 32.5, 'gm_p75': 0.72, 'da_p90': 0.55},
-    '电子':     {'roe_median': 0.065, 'gm_median': 0.248, 'da_median': 0.382, 'pe_median': 35.1, 'gm_p75': 0.38, 'da_p90': 0.60},
-    '电力设备': {'roe_median': 0.091, 'gm_median': 0.224, 'da_median': 0.526, 'pe_median': 22.8, 'gm_p75': 0.35, 'da_p90': 0.70},
-    '银行':     {'roe_median': 0.105, 'gm_median': None,   'da_median': 0.915, 'pe_median': 5.8,  'gm_p75': None, 'da_p90': 0.96},
-    '非银金融': {'roe_median': 0.073, 'gm_median': None,   'da_median': 0.782, 'pe_median': 14.2, 'gm_p75': None, 'da_p90': 0.90},
-    '房地产':   {'roe_median': 0.021, 'gm_median': 0.253, 'da_median': 0.724, 'pe_median': 12.5, 'gm_p75': 0.40, 'da_p90': 0.88},
-    '计算机':   {'roe_median': 0.048, 'gm_median': 0.356, 'da_median': 0.321, 'pe_median': 48.2, 'gm_p75': 0.55, 'da_p90': 0.55},
-    '国防军工': {'roe_median': 0.055, 'gm_median': 0.325, 'da_median': 0.400, 'pe_median': 55.0, 'gm_p75': 0.50, 'da_p90': 0.62},
-    '通信':     {'roe_median': 0.072, 'gm_median': 0.285, 'da_median': 0.410, 'pe_median': 30.0, 'gm_p75': 0.42, 'da_p90': 0.60},
-    '传媒':     {'roe_median': 0.038, 'gm_median': 0.310, 'da_median': 0.350, 'pe_median': 40.0, 'gm_p75': 0.48, 'da_p90': 0.58},
-    '公用事业': {'roe_median': 0.068, 'gm_median': 0.280, 'da_median': 0.580, 'pe_median': 18.0, 'gm_p75': 0.40, 'da_p90': 0.75},
-    '建筑装饰': {'roe_median': 0.065, 'gm_median': 0.120, 'da_median': 0.650, 'pe_median': 10.0, 'gm_p75': 0.20, 'da_p90': 0.80},
-    '有色金属': {'roe_median': 0.090, 'gm_median': 0.150, 'da_median': 0.450, 'pe_median': 20.0, 'gm_p75': 0.25, 'da_p90': 0.65},
-    '煤炭':     {'roe_median': 0.120, 'gm_median': 0.300, 'da_median': 0.450, 'pe_median': 8.0,  'gm_p75': 0.45, 'da_p90': 0.65},
-    '汽车':     {'roe_median': 0.068, 'gm_median': 0.180, 'da_median': 0.520, 'pe_median': 22.0, 'gm_p75': 0.30, 'da_p90': 0.68},
-    '家用电器': {'roe_median': 0.135, 'gm_median': 0.260, 'da_median': 0.420, 'pe_median': 16.0, 'gm_p75': 0.38, 'da_p90': 0.60},
-    '机械设备': {'roe_median': 0.075, 'gm_median': 0.270, 'da_median': 0.420, 'pe_median': 25.0, 'gm_p75': 0.40, 'da_p90': 0.62},
-    '基础化工': {'roe_median': 0.080, 'gm_median': 0.220, 'da_median': 0.400, 'pe_median': 18.0, 'gm_p75': 0.35, 'da_p90': 0.60},
-    '农林牧渔': {'roe_median': 0.050, 'gm_median': 0.180, 'da_median': 0.400, 'pe_median': 30.0, 'gm_p75': 0.30, 'da_p90': 0.62},
-}
-
-# 行业-估值权重矩阵
-VALUATION_WEIGHTS = {
-    'default':  {'pe': 0.35, 'pb': 0.25, 'peg': 0.25, 'dividend': 0.15},
-    '银行':     {'pe': 0.20, 'pb': 0.40, 'peg': 0.15, 'dividend': 0.25},
-    '非银金融': {'pe': 0.20, 'pb': 0.30, 'peg': 0.20, 'dividend': 0.30},
-    '房地产':   {'pe': 0.25, 'pb': 0.35, 'peg': 0.15, 'dividend': 0.25},
-    '建筑装饰': {'pe': 0.25, 'pb': 0.35, 'peg': 0.15, 'dividend': 0.25},
-    '公用事业': {'pe': 0.25, 'pb': 0.25, 'peg': 0.15, 'dividend': 0.35},
-}
-
-# 申万行业 -> 宏观匹配映射
-INDUSTRY_MACRO_MAP = {
-    '利率上行受益': ['银行', '非银金融', '保险'],
-    '利率上行受损': ['房地产', '建筑装饰', '公用事业'],
-    '利率下行受益': ['电子', '计算机', '电力设备', '医药生物'],
-    '人民币贬值受益': ['家用电器', '纺织服饰', '汽车', '轻工制造'],
-    '人民币贬值受损': ['交通运输', '农林牧渔'],
-    '通胀上升受益': ['煤炭', '有色金属', '食品饮料', '银行'],
-    '通胀上升受损': ['电子', '计算机', '电力设备'],
-    '经济扩张受益': ['有色金属', '煤炭', '非银金融', '银行'],
-    '经济扩张受损': ['公用事业'],
-}
-
-# 动态权重矩阵
-WEIGHT_MATRIX = {
-    '正常':     {'M1': 0.25, 'M2': 0.25, 'M3': 0.20, 'M4': 0.15, 'M5': 0.15},
-    '牛市':     {'M1': 0.15, 'M2': 0.35, 'M3': 0.15, 'M4': 0.20, 'M5': 0.15},
-    '熊市':     {'M1': 0.30, 'M2': 0.20, 'M3': 0.15, 'M4': 0.20, 'M5': 0.15},
-    '震荡市':   {'M1': 0.25, 'M2': 0.20, 'M3': 0.20, 'M4': 0.20, 'M5': 0.15},
-    '高不确定性': {'M1': 0.20, 'M2': 0.25, 'M3': 0.15, 'M4': 0.30, 'M5': 0.10},
-}
+# ── 行业基准数据（从 data/industry_benchmarks.json 加载）──
+_bd = config.load_data_json("industry_benchmarks.json", {})
+INDUSTRY_BENCHMARKS = _bd.get("industry_benchmarks", {})
+VALUATION_WEIGHTS = _bd.get("valuation_weights", {})
+INDUSTRY_MACRO_MAP = _bd.get("industry_macro_map", {})
+WEIGHT_MATRIX = _bd.get("weight_matrix", {})
 
 
 class MultiFactorModel:
@@ -94,19 +43,18 @@ class MultiFactorModel:
 
     def run_diagnosis(self) -> Dict:
         """执行完整的多因子透视诊断"""
-        log(f"=== 开始AI多因子透视诊断: {self.fund_code} ===")
+        logger.info(f"=== 开始AI多因子透视诊断: {self.fund_code} ===")
         t0 = time.time()
 
         # 1. 获取基金基本信息
         try:
             fund_info = self.fund_analyzer.get_fund_info()
-            log(f"基金信息获取结果: {type(fund_info)}, is_None={fund_info is None}")
+            logger.info(f"基金信息获取结果: {type(fund_info)}, is_None={fund_info is None}")
             if fund_info:
-                log(f"基金名称: {fund_info.get('fund_name')}, 净值: {fund_info.get('net_value')}")
+                logger.info(f"基金名称: {fund_info.get('fund_name')}, 净值: {fund_info.get('net_value')}")
         except Exception as e:
-            log(f"获取基金信息异常: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning(f"获取基金信息异常: {e}")
+            logger.exception("基金信息异常详情")
             fund_info = None
 
         if not fund_info:
@@ -133,7 +81,7 @@ class MultiFactorModel:
         # 4. 判断市场环境类型 -> 动态权重
         env_type = self._identify_market_regime(market_env)
         weights = WEIGHT_MATRIX.get(env_type, WEIGHT_MATRIX['正常'])
-        log(f"市场环境: {env_type}, 权重: {weights}")
+        logger.info(f"市场环境: {env_type}, 权重: {weights}")
 
         # 5. 对每只重仓股获取详细数据
         stock_details = self._fetch_stock_details_batch(holdings)
@@ -179,7 +127,7 @@ class MultiFactorModel:
 
         # 13. 组装输出
         elapsed = time.time() - t0
-        log(f"=== 诊断完成, 耗时{elapsed:.1f}s, 综合评分={composite:.1f} ===")
+        logger.info(f"=== 诊断完成, 耗时{elapsed:.1f}s, 综合评分={composite:.1f} ===")
 
         grade, action = self._score_to_grade(composite)
 
@@ -249,7 +197,7 @@ class MultiFactorModel:
                             result['volatility_pct'] = round(float(np.std(returns) * np.sqrt(252) * 100), 2)
                         return result
             except Exception as e:
-                log(f"获取CSI300 K线失败: {e}")
+                logger.warning(f"获取CSI300 K线失败: {e}")
             return {}
 
         def fetch_csi300_pe():
@@ -339,7 +287,7 @@ class MultiFactorModel:
         if env['epu_pct'] is None:
             env['epu_pct'] = 0.50
 
-        log(f"市场环境: PE_pct={env['csi300_pe_pct']}, MA_ratio={env.get('ma_ratio')}, Vol={env.get('volatility_pct')}")
+        logger.info(f"市场环境: PE_pct={env['csi300_pe_pct']}, MA_ratio={env.get('ma_ratio')}, Vol={env.get('volatility_pct')}")
         return env
 
     def _identify_market_regime(self, env: Dict) -> str:
@@ -374,11 +322,11 @@ class MultiFactorModel:
             name = h.get('name', '')
             idx = completed[0] + 1
             completed[0] = idx
-            log(f"  [{idx}/{total}] 获取 {name}({code}) 详情...")
+            logger.info(f"  [{idx}/{total}] 获取 {name}({code}) 详情...")
             try:
                 return code, self._fetch_single_stock_detail(code, name)
             except Exception as e:
-                log(f"  获取{code}详情失败: {e}")
+                logger.warning(f"  获取{code}详情失败: {e}")
                 return code, self._empty_stock_detail(code, name)
 
         # 并发获取，最多5个线程
@@ -391,10 +339,10 @@ class MultiFactorModel:
                 except Exception as e:
                     h = futures[future]
                     code = h.get('code', '')
-                    log(f"  {code} 并发获取超时或失败: {e}")
+                    logger.warning(f"  {code} 并发获取超时或失败: {e}")
                     details[code] = self._empty_stock_detail(code, h.get('name', ''))
 
-        log(f"  股票数据获取完成: {len(details)} 只, 耗时已优化")
+        logger.info(f"  股票数据获取完成: {len(details)} 只, 耗时已优化")
         return details
 
     def _fetch_single_stock_detail(self, code: str, name: str) -> Dict:
@@ -434,14 +382,14 @@ class MultiFactorModel:
             fin_data = self._fetch_detailed_financials(code)
             detail.update(fin_data)
         except Exception as e:
-            log(f"  {code}财务数据获取失败: {e}")
+            logger.warning(f"  {code}财务数据获取失败: {e}")
 
         # 获取估值数据（M2）
         try:
             val_data = self._fetch_valuation_data(code, detail.get('industry', ''))
             detail.update(val_data)
         except Exception as e:
-            log(f"  {code}估值数据获取失败: {e}")
+            logger.warning(f"  {code}估值数据获取失败: {e}")
 
         # 获取新闻（M3用）
         try:
@@ -509,9 +457,9 @@ class MultiFactorModel:
                         npg_raw = self._safe_float(latest.get('PARENT_NETPROFIT_YOY'))
                         result['net_profit_growth'] = npg_raw / 100.0 if npg_raw is not None and abs(npg_raw) > 1 else npg_raw
                         result['financial_raw'] = latest
-                        log(f"  {code} 财务API成功: ROE={result['roe']}, Debt={result['debt_ratio']}")
+                        logger.info(f"  {code} 财务API成功: ROE={result['roe']}, Debt={result['debt_ratio']}")
         except Exception as e:
-            log(f"  {code} 东方财富财务API失败: {e}")
+            logger.warning(f"  {code} 东方财富财务API失败: {e}")
 
         # 方法2：备用 - 使用StockAnalyzer
         if result['roe'] is None:
@@ -522,9 +470,9 @@ class MultiFactorModel:
                     result['roe'] = self._safe_float(fin.get('roe'))
                     result['debt_ratio'] = self._safe_float(fin.get('debt_ratio'))
                     result['financial_raw'] = fin
-                    log(f"  {code} 备用API成功: ROE={result['roe']}")
+                    logger.info(f"  {code} 备用API成功: ROE={result['roe']}")
             except Exception as e2:
-                log(f"  {code} 备用API也失败: {e2}")
+                logger.warning(f"  {code} 备用API也失败: {e2}")
 
         # 现金流数据（尝试）
         try:
@@ -592,7 +540,7 @@ class MultiFactorModel:
                             pass
 
         except Exception as e:
-            log(f"  {code}估值获取失败: {e}")
+            logger.warning(f"  {code}估值获取失败: {e}")
 
         # PE/PB历史分位数估算（使用传入的行业信息，避免重复创建StockAnalyzer）
         try:
@@ -1336,7 +1284,7 @@ class MultiFactorModel:
                 result['recommendation'].setdefault('watch_points', [])
             return result
         except Exception as e:
-            log(f"AI解读失败，使用降级方案: {e}")
+            logger.warning(f"AI解读失败，使用降级方案: {e}")
             grade, action = self._score_to_grade(composite)
             return {
                 'summary': f"综合评分{composite:.1f}分，{grade}。持仓整体{self._qualitative_m1(m1['score'])}，估值{self._qualitative_m2(m2['score'])}。",

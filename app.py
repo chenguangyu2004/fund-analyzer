@@ -3,27 +3,11 @@ from fund_analyzer import FundAnalyzer
 from stock_analyzer import StockAnalyzer
 from deepseek_analyzer import DeepSeekAnalyzer, StockNewsAnalyzer
 from multifactor_model import MultiFactorModel
-import sys
-import os
+from logger import get_logger
+import config
 
-# 加载 .env 文件中的环境变量（如果存在）
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # 如果没安装 python-dotenv，使用系统环境变量
-
+logger = get_logger("app")
 app = Flask(__name__)
-
-# 强制刷新输出
-sys.stdout.reconfigure(line_buffering=True)
-
-# 简单的日志文件写入
-def log(message):
-    print(message, flush=True)
-    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'debug.log')
-    with open(log_path, 'a', encoding='utf-8') as f:
-        f.write(f"{message}\n")
 
 @app.route('/')
 def index():
@@ -33,20 +17,20 @@ def index():
 @app.route('/test')
 def test():
     """测试接口"""
-    log("测试接口被访问")
+    logger.info("测试接口被访问")
     return "OK"
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_fund():
     """分析基金API"""
-    log("=== 收到分析请求 ===")
+    logger.info("=== 收到分析请求 ===")
     try:
         data = request.get_json()
         fund_code = data.get('fund_code', '').strip()
         buy_price = float(data.get('buy_price', 0))
         shares = float(data.get('shares', 0))
 
-        log(f"基金代码: {fund_code}, 成本: {buy_price}, 份额: {shares}")
+        logger.info(f"基金代码: {fund_code}, 成本: {buy_price}, 份额: {shares}")
 
         # 验证输入
         if not fund_code or len(fund_code) != 6 or not fund_code.isdigit():
@@ -68,18 +52,18 @@ def analyze_fund():
             })
 
         # 创建分析器并获取信息
-        print("创建分析器...")
+        logger.info("创建分析器...")
         analyzer = FundAnalyzer(fund_code)
         
-        print("获取基金信息...")
+        logger.info("获取基金信息...")
         fund_info = analyzer.get_fund_info()
         if not fund_info:
-            print("基金信息获取失败")
+            logger.warning("基金信息获取失败")
             return jsonify({
                 'success': False,
                 'error': '无法获取基金信息，请检查基金代码是否正确'
             })
-        print(f"基金信息: {fund_info}")
+        logger.info(f"基金信息: {fund_info}")
 
         # 计算盈亏
         profit_loss = analyzer.calculate_profit_loss(buy_price, shares)
@@ -87,7 +71,7 @@ def analyze_fund():
         # 获取历史数据（可选，失败了也不影响主要功能）
         history_data = []
         try:
-            print("获取历史数据...")
+            logger.info("获取历史数据...")
             history_df = analyzer.get_fund_history(30)
             if history_df is not None and len(history_df) > 0:
                 history_data = [
@@ -97,17 +81,17 @@ def analyze_fund():
                     }
                     for _, row in history_df.iterrows()
                 ]
-            print(f"历史数据: {len(history_data)} 条")
+            logger.info(f"历史数据: {len(history_data)} 条")
         except Exception as e:
-            print(f"历史数据获取失败（跳过）: {e}")
+            logger.warning(f"历史数据获取失败（跳过）: {e}")
             history_data = []
 
         # 获取前十大持仓
         holdings = []
         try:
-            print("获取持仓数据...")
+            logger.info("获取持仓数据...")
             holdings = analyzer._get_fund_holdings(0)
-            print(f"持仓数据: {len(holdings)} 条")
+            logger.info(f"持仓数据: {len(holdings)} 条")
             
             # 有持仓数据后，重新计算实时估值（基于股票涨跌）
             if holdings and len(holdings) > 0:
@@ -123,14 +107,14 @@ def analyze_fund():
                     fund_info['has_realtime'] = True
                     fund_info['realtime_source'] = 'holdings_calculated'
                     fund_info['nav_date'] = now.strftime('%Y-%m-%d')
-                    print(f"[实时估值] 使用持仓计算: {recalc_estimate}")
+                    logger.info(f"[实时估值] 使用持仓计算: {recalc_estimate}")
                 elif recalc_estimate:
                     fund_info['realtime_source'] = 'fundgz_api'
         except Exception as e:
-            print(f"持仓数据获取失败（跳过）: {e}")
+            logger.warning(f"持仓数据获取失败（跳过）: {e}")
             holdings = []
 
-        print("=== 分析完成 ===")
+        logger.info("=== 分析完成 ===")
         return jsonify({
             'success': True,
             'data': {
@@ -142,9 +126,7 @@ def analyze_fund():
         })
 
     except Exception as e:
-        print(f"!!! 分析失败: {e} !!!")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"!!! 分析失败: {e} !!!")
         return jsonify({
             'success': False,
             'error': f'分析失败: {str(e)}'
@@ -158,7 +140,7 @@ def stock_page():
 @app.route('/api/stock/<stock_code>')
 def get_stock_detail(stock_code):
     """获取股票详情API"""
-    log(f"=== 收到股票详情请求: {stock_code} ===")
+    logger.info(f"=== 收到股票详情请求: {stock_code} ===")
     try:
         analyzer = StockAnalyzer(stock_code)
         
@@ -172,21 +154,19 @@ def get_stock_detail(stock_code):
         # 新闻和行业龙头已在 get_stock_info() 中获取，无需重复调用
         
         # 获取财务数据
-        log("获取财务数据...")
+        logger.info("获取财务数据...")
         financial = analyzer.get_financial_report()
         if financial:
             stock_info['financial'] = financial
         
-        log("=== 股票详情获取完成 ===")
+        logger.info("=== 股票详情获取完成 ===")
         return jsonify({
             'success': True,
             'data': stock_info
         })
         
     except Exception as e:
-        log(f"!!! 股票详情获取失败: {e} !!!")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"!!! 股票详情获取失败: {e} !!!")
         return jsonify({
             'success': False,
             'error': f'获取股票详情失败: {str(e)}'
@@ -207,7 +187,7 @@ def get_stock_kline(stock_code):
             'data': kline_data
         })
     except Exception as e:
-        log(f"!!! K线数据获取失败: {e} !!!")
+        logger.warning(f"!!! K线数据获取失败: {e} !!!")
         return jsonify({
             'success': False,
             'error': f'获取K线数据失败: {str(e)}'
@@ -216,12 +196,12 @@ def get_stock_kline(stock_code):
 @app.route('/api/ai-analyze', methods=['POST'])
 def ai_analyze_fund():
     """AI多因子透视诊断API"""
-    log("=== 收到AI多因子透视诊断请求 ===")
+    logger.info("=== 收到AI多因子透视诊断请求 ===")
     try:
         data = request.get_json()
         fund_code = data.get('fund_code', '').strip()
         
-        log(f"基金代码: {fund_code}")
+        logger.info(f"基金代码: {fund_code}")
         
         if not fund_code:
             return jsonify({
@@ -234,16 +214,14 @@ def ai_analyze_fund():
         result = model.run_diagnosis()
         
         if result.get('success'):
-            log(f"多因子诊断完成: 综合={result.get('composite_score')}分")
+            logger.info(f"多因子诊断完成: 综合={result.get('composite_score')}分")
         else:
-            log(f"多因子诊断失败: {result.get('error')}")
+            logger.warning(f"多因子诊断失败: {result.get('error')}")
         
         return jsonify(result)
         
     except Exception as e:
-        log(f"!!! AI分析失败: {e} !!!")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"!!! AI分析失败: {e} !!!")
         return jsonify({
             'success': False,
             'error': f'AI分析失败: {str(e)}'
@@ -270,7 +248,7 @@ def get_market_overview():
             }
         })
     except Exception as e:
-        log(f"获取市场概况失败: {e}")
+        logger.warning(f"获取市场概况失败: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -279,50 +257,18 @@ def get_market_overview():
 @app.route('/api/check-api-key')
 def check_api_key():
     """检查API密钥是否配置"""
-    import os
-    api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+    api_key = config.DEEPSEEK_API_KEY
     return jsonify({
         'configured': bool(api_key),
         'message': 'API密钥已配置' if api_key else '请配置DeepSeek API密钥（环境变量: DEEPSEEK_API_KEY）'
     })
 
-@app.route('/dashboard')
-def dashboard_page():
-    """AI多因子透视诊断仪表盘"""
-    return render_template('dashboard.html')
 
-@app.route('/api/multifactor-diagnosis', methods=['POST'])
-def multifactor_diagnosis():
-    """AI多因子透视诊断API"""
-    log("=== 收到多因子透视诊断请求 ===")
-    try:
-        data = request.get_json()
-        fund_code = data.get('fund_code', '').strip()
-        api_key = data.get('api_key', '')
-
-        if not fund_code:
-            return jsonify({'success': False, 'error': '基金代码不能为空'})
-
-        log(f"基金代码: {fund_code}")
-
-        model = MultiFactorModel(fund_code, api_key)
-        result = model.run_diagnosis()
-
-        return jsonify(result)
-
-    except Exception as e:
-        log(f"!!! 多因子诊断失败: {e} !!!")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': f'诊断失败: {str(e)}'
-        })
 
 @app.route('/api/ai-chat', methods=['POST'])
 def ai_chat():
     """AI对话问答API"""
-    log("=== 收到AI问答请求 ===")
+    logger.info("=== 收到AI问答请求 ===")
     try:
         data = request.get_json()
         fund_codes = data.get('fund_codes', [])
@@ -354,7 +300,7 @@ def ai_chat():
         if not question:
             return jsonify({'success': False, 'error': '问题不能为空'})
         
-        log(f"问题: {question[:50]}...")
+        logger.info(f"问题: {question[:50]}...")
         
         api_key = data.get('api_key', '')
         analyzer = DeepSeekAnalyzer(api_key)
@@ -375,9 +321,7 @@ def ai_chat():
         
         return jsonify({'success': True, 'data': answer})
     except Exception as e:
-        log(f"!!! AI问答失败: {e} !!!")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"!!! AI问答失败: {e} !!!")
         return jsonify({'success': False, 'error': str(e)})
 
 
@@ -470,15 +414,14 @@ def get_strategy_analysis(fund_code):
             }
         })
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"策略分析失败: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
 
 @app.route('/api/portfolio-analyze', methods=['POST'])
 def portfolio_analyze():
     """组合AI分析"""
-    log("=== 收到组合AI分析请求 ===")
+    logger.info("=== 收到组合AI分析请求 ===")
     try:
         data = request.get_json()
         funds = data.get('funds', [])
@@ -503,7 +446,7 @@ def portfolio_analyze():
                     'top_holdings': [{'name': h['name'], 'ratio': h['ratio']} for h in holdings[:3]] if holdings else []
                 })
             except Exception as e:
-                log(f"[组合] 获取基金{f['code']}数据失败: {e}")
+                logger.warning(f"[组合] 获取基金{f['code']}数据失败: {e}")
         if not portfolio_data:
             return jsonify({'success': False, 'error': '无法获取基金数据'})
         deepseek = DeepSeekAnalyzer()
@@ -523,12 +466,14 @@ def portfolio_analyze():
         result = deepseek.ai_chat_with_prompt(prompt)
         return jsonify({'success': True, 'data': result})
     except Exception as e:
-        log(f"组合AI分析失败: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"组合AI分析失败: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
 
 if __name__ == '__main__':
-    print("启动Flask服务器...")
-    app.run(debug=False, host='127.0.0.1', port=5000)
+    logger.info(f"启动Flask服务器 -> http://{config.FLASK_HOST}:{config.FLASK_PORT}")
+
+    # 后台异步：每天一次用 AI 扫描行业龙头变化并自动更新 JSON
+    StockAnalyzer.auto_refresh_industry_leaders()
+
+    app.run(debug=config.FLASK_DEBUG, host=config.FLASK_HOST, port=config.FLASK_PORT)

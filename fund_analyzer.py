@@ -4,11 +4,17 @@ import numpy as np
 from datetime import datetime, timedelta
 import json
 import re
-import traceback
 import time
+from logger import get_logger
+
+logger = get_logger("fund_analyzer")
 
 class FundAnalyzer:
-    """基金分析类"""
+    """基金分析类 — 组合四个子模块：FundInfo / FundHoldings / FundRisk / FundStrategy"""
+
+    # ═══════════════════════════════════════
+    #  SECTION 1: 基金基本信息与净值
+    # ═══════════════════════════════════════
 
     def __init__(self, fund_code):
         self.fund_code = fund_code
@@ -24,14 +30,14 @@ class FundAnalyzer:
             # 同时获取官方净值和实时估算净值
             official_data = self._get_official_net_value()
             if not official_data:
-                print("无法获取官方净值数据")
+                logger.info("无法获取官方净值数据")
                 return None
 
             realtime_data = None
             try:
                 realtime_data = self._get_realtime_estimate(holdings)
             except Exception as e:
-                print(f"实时估值获取失败(跳过): {e}")
+                logger.info(f"实时估值获取失败(跳过): {e}")
 
             try:
                 current_time = datetime.now()
@@ -54,7 +60,7 @@ class FundAnalyzer:
             try:
                 extra_info = self._get_fund_extra_info()
             except Exception as e:
-                print(f"额外信息获取失败(跳过): {e}")
+                logger.info(f"额外信息获取失败(跳过): {e}")
             if not extra_info:
                 extra_info = {'fund_manager': '未知', 'fund_type': '未知', 'scale': '未知'}
             
@@ -62,7 +68,7 @@ class FundAnalyzer:
             try:
                 growth_rates = self._get_fund_growth_rates()
             except Exception as e:
-                print(f"涨跌幅获取失败(跳过): {e}")
+                logger.info(f"涨跌幅获取失败(跳过): {e}")
             if not growth_rates:
                 growth_rates = {'month_1': None, 'month_3': None, 'month_6': None, 'year_1': None}
 
@@ -106,15 +112,14 @@ class FundAnalyzer:
                 'update_time': update_time
             }
 
-            print(f"官方净值: {self.fund_data['official_net_value']}, 实时估值: {self.fund_data['realtime_net_value']}")
-            print(f"基金经理: {self.fund_data['manager']}, 规模: {self.fund_data['scale']}, 类型: {self.fund_data['fund_type']}")
-            print(f"涨跌幅: 1月={self.fund_data['month_1_change']}, 3月={self.fund_data['month_3_change']}, 6月={self.fund_data['month_6_change']}, 1年={self.fund_data['year_1_change']}")
+            logger.info(f"官方净值: {self.fund_data['official_net_value']}, 实时估值: {self.fund_data['realtime_net_value']}")
+            logger.info(f"基金经理: {self.fund_data['manager']}, 规模: {self.fund_data['scale']}, 类型: {self.fund_data['fund_type']}")
+            logger.info(f"涨跌幅: 1月={self.fund_data['month_1_change']}, 3月={self.fund_data['month_3_change']}, 6月={self.fund_data['month_6_change']}, 1年={self.fund_data['year_1_change']}")
             return self.fund_data
 
         except Exception as e:
-            print(f"获取基金信息失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.info(f"获取基金信息失败: {e}")
+            logger.exception(f"error in fund_analyzer")
             return None
 
     def _get_fund_extra_info(self):
@@ -144,7 +149,7 @@ class FundAnalyzer:
                                 result['fund_type'] = ftype
                             break
         except Exception as e:
-            print(f"[额外信息-搜索API] 获取失败: {e}")
+            logger.info(f"[额外信息-搜索API] 获取失败: {e}")
         
         # 备用：从get_manager_history获取经理
         if result['fund_manager'] == '未知':
@@ -205,7 +210,7 @@ class FundAnalyzer:
                         val = float(m.group(1))
                         rates[key] = val
         except Exception as e:
-            print(f"[涨跌幅] 获取失败: {e}")
+            logger.info(f"[涨跌幅] 获取失败: {e}")
         
         return rates
 
@@ -223,7 +228,7 @@ class FundAnalyzer:
         # 方法1: 从天天基金网 jjjz 页面获取
         try:
             url = f"http://fundf10.eastmoney.com/jjjz_{self.fund_code}.html"
-            print(f"[官方净值] 方法1: {url}")
+            logger.info(f"[官方净值] 方法1: {url}")
             response = requests.get(url, headers=headers, timeout=10)
             response.encoding = 'utf-8'
             
@@ -261,13 +266,13 @@ class FundAnalyzer:
                         date_str = date_match.group(1)
                         nav_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
         except Exception as e:
-            print(f"[官方净值] 方法1失败: {e}")
+            logger.info(f"[官方净值] 方法1失败: {e}")
         
         # 方法2: 通过 fundgz 实时API获取
         if net_value <= 0:
             try:
                 url2 = f"http://fundgz.1234567.com.cn/js/{self.fund_code}.js"
-                print(f"[官方净值] 方法2(fundgz): {url2}")
+                logger.info(f"[官方净值] 方法2(fundgz): {url2}")
                 r = requests.get(url2, headers=headers, timeout=5)
                 if r.status_code == 200:
                     json_str = r.text.strip()
@@ -278,15 +283,15 @@ class FundAnalyzer:
                     accumulated_value = net_value
                     if data.get('gztime'):
                         nav_date = data['gztime'][:10]
-                    print(f"[官方净值] 方法2成功: 净值={net_value}")
+                    logger.info(f"[官方净值] 方法2成功: 净值={net_value}")
             except Exception as e:
-                print(f"[官方净值] 方法2失败: {e}")
+                logger.info(f"[官方净值] 方法2失败: {e}")
         
         # 方法3: 使用东方财富API
         if net_value <= 0:
             try:
                 url3 = f"https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?pageIndex=1&pageSize=3&plat=Android&product=EFund&Version=1&Fcodes={self.fund_code}"
-                print(f"[官方净值] 方法3(东方财富API): {url3}")
+                logger.info(f"[官方净值] 方法3(东方财富API): {url3}")
                 r = requests.get(url3, headers=headers, timeout=5)
                 if r.status_code == 200:
                     data = r.json()
@@ -296,15 +301,15 @@ class FundAnalyzer:
                         accumulated_value = float(item.get('NAV', 0))
                         nav_date = item.get('PDATE', '未知')
                         fund_name = item.get('SHORTNAME', fund_name)
-                        print(f"[官方净值] 方法3成功: 净值={net_value}, 名称={fund_name}")
+                        logger.info(f"[官方净值] 方法3成功: 净值={net_value}, 名称={fund_name}")
             except Exception as e:
-                print(f"[官方净值] 方法3失败: {e}")
+                logger.info(f"[官方净值] 方法3失败: {e}")
         
         # 方法4: 从pingzhongdata JS获取（QDII等特殊基金兜底）
         if net_value <= 0:
             try:
                 url4 = f"http://fund.eastmoney.com/pingzhongdata/{self.fund_code}.js"
-                print(f"[官方净值] 方法4(pingzhongdata): {url4}")
+                logger.info(f"[官方净值] 方法4(pingzhongdata): {url4}")
                 r4 = requests.get(url4, headers=headers, timeout=15)
                 if r4.status_code == 200:
                     text = r4.text
@@ -327,9 +332,9 @@ class FundAnalyzer:
                                 if ts:
                                     from datetime import datetime as _dt
                                     nav_date = _dt.fromtimestamp(ts / 1000).strftime('%Y-%m-%d')
-                                print(f"[官方净值] 方法4成功: 净值={net_value}, 日期={nav_date}")
+                                logger.info(f"[官方净值] 方法4成功: 净值={net_value}, 日期={nav_date}")
                         except Exception as e4:
-                            print(f"[官方净值] 方法4解析失败: {e4}")
+                            logger.info(f"[官方净值] 方法4解析失败: {e4}")
                     # 备用：从Data_ACWorthTrend获取累计净值
                     if net_value > 0 and accumulated_value <= 0:
                         acw_m = re.search(r'Data_ACWorthTrend\s*=\s*(\[.*?\]);', text, re.DOTALL)
@@ -346,12 +351,12 @@ class FundAnalyzer:
                             except Exception:
                                 pass
             except Exception as e:
-                print(f"[官方净值] 方法4失败: {e}")
+                logger.info(f"[官方净值] 方法4失败: {e}")
         
-        print(f"[官方净值] 最终结果: 净值={net_value}, 日期={nav_date}, 名称={fund_name}")
+        logger.info(f"[官方净值] 最终结果: 净值={net_value}, 日期={nav_date}, 名称={fund_name}")
         
         if net_value <= 0:
-            print("[官方净值] 所有方法均失败")
+            logger.info("[官方净值] 所有方法均失败")
             return None
         
         if fund_name:
@@ -373,7 +378,6 @@ class FundAnalyzer:
             'fund_type': '未知',
             'foundation_date': '未知'
         }
-
 
 
     def _get_realtime_estimate(self, holdings=None):
@@ -402,16 +406,16 @@ class FundAnalyzer:
                         'estimated_value': gsz,
                         'estimated_growth': gszzl
                     }
-                    print(f"[实时估值] 天天基金接口成功: 估值{gsz}, 涨跌{gszzl}%")
+                    logger.info(f"[实时估值] 天天基金接口成功: 估值{gsz}, 涨跌{gszzl}%")
         except Exception as e:
-            print(f"[实时估值] 天天基金接口失败: {e}")
+            logger.info(f"[实时估值] 天天基金接口失败: {e}")
         
         # 方法2: 如果天天基金接口失败但有持仓数据，自己计算
         if result is None and holdings and len(holdings) > 0:
             try:
                 result = self._calc_value_from_holdings(holdings)
             except Exception as e:
-                print(f"[实时估值] 持仓计算失败: {e}")
+                logger.info(f"[实时估值] 持仓计算失败: {e}")
         
         return result
 
@@ -453,7 +457,7 @@ class FundAnalyzer:
             estimated_nav = official_nav * avg_price_ratio
             estimated_change = (estimated_nav - official_nav) / official_nav * 100 if official_nav > 0 else 0
             
-            print(f"[实时估值] 持仓计算成功: 官方净值{official_nav}, 估算{estimated_nav:.4f}, 涨跌{estimated_change:.2f}%, 覆盖率{total_weight*100:.1f}%")
+            logger.info(f"[实时估值] 持仓计算成功: 官方净值{official_nav}, 估算{estimated_nav:.4f}, 涨跌{estimated_change:.2f}%, 覆盖率{total_weight*100:.1f}%")
             return {
                 'estimated_value': round(estimated_nav, 4),
                 'estimated_growth': round(estimated_change, 2)
@@ -461,20 +465,24 @@ class FundAnalyzer:
         
         return None
 
+    # ═══════════════════════════════════════
+    #  SECTION 2: 持仓数据与历史净值
+    # ═══════════════════════════════════════
+
     def get_fund_history(self, days=30):
         """获取历史净值数据"""
         try:
-            print("[历史数据] 开始获取...")
+            logger.info("[历史数据] 开始获取...")
             # 从天天基金网获取历史净值
             url = f"http://fund.eastmoney.com/f10/F10DataApi.aspx?type=lsjz&code={self.fund_code}&page=1&per=100"
-            print(f"[历史数据] 请求: {url}")
+            logger.info(f"[历史数据] 请求: {url}")
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
                 'Referer': 'http://fund.eastmoney.com/'
             }
             response = requests.get(url, headers=headers, timeout=10)
             response.encoding = 'utf-8'
-            print(f"[历史数据] 响应状态: {response.status_code}")
+            logger.info(f"[历史数据] 响应状态: {response.status_code}")
 
             # 直接从响应文本中提取content字段的HTML内容
             # 格式: var apidata={ content:"<table>...</table>", ... }
@@ -483,7 +491,7 @@ class FundAnalyzer:
             # 提取content字段中的HTML
             content_match = re.search(r'content:"(.*?)",', response_text, re.DOTALL)
             if not content_match:
-                print("[历史数据] 未找到content字段")
+                logger.info("[历史数据] 未找到content字段")
                 return None
 
             # 解码HTML实体和转义字符
@@ -497,7 +505,7 @@ class FundAnalyzer:
             pattern = r'<tr><td>(\d{4}-\d{2}-\d{2})</td><td[^>]*>([\d.]+)</td><td[^>]*>([\d.]+)</td><td[^>]*>([^<]+)</td><td[^>]*>([^<]+)</td><td[^>]*>([^<]+)</td><td[^>]*>([^<]*)</td></tr>'
             matches = re.findall(pattern, content)
 
-            print(f"[历史数据] 找到 {len(matches)} 条数据")
+            logger.info(f"[历史数据] 找到 {len(matches)} 条数据")
 
             if not matches:
                 return None
@@ -511,7 +519,7 @@ class FundAnalyzer:
                     'accumulated_value': float(match[2])  # 累计净值
                 })
 
-            print(f"[历史数据] 处理了 {len(records)} 条记录")
+            logger.info(f"[历史数据] 处理了 {len(records)} 条记录")
 
             # 创建DataFrame，避免使用可能导致错误的操作
             df = pd.DataFrame(records)
@@ -521,45 +529,44 @@ class FundAnalyzer:
             return df
 
         except Exception as e:
-            print(f"[历史数据] 获取失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.info(f"[历史数据] 获取失败: {e}")
+            logger.exception(f"error in fund_analyzer")
             return None
 
     def _get_fund_holdings(self, top=10):
         """获取基金前十大持仓（支持所有基金类型：A股/QDII/港股/美股）"""
-        print(f"[持仓] 开始获取 {self.fund_code} 的持仓数据...")
+        logger.info(f"[持仓] 开始获取 {self.fund_code} 的持仓数据...")
         
         # 方法1: 天天基金网（A股基金）
         holdings = self._fetch_holdings_eastmoney(top)
         
         # 方法4: QDII基金专用（港股持仓）
         if not holdings or len(holdings) == 0:
-            print("[持仓] 方法1失败，尝试QDII港股持仓接口...")
+            logger.info("[持仓] 方法1失败，尝试QDII港股持仓接口...")
             holdings = self._fetch_holdings_qdii(top)
         
         # 方法2: 东方财富网（QDII/港股通基金备用）
         if not holdings or len(holdings) == 0:
-            print("[持仓] 方法1/4失败，尝试东方财富...")
+            logger.info("[持仓] 方法1/4失败，尝试东方财富...")
             holdings = self._fetch_holdings_eastmoney2(top)
         
         # 方法3: 雪球/好买基金（备用）
         if not holdings or len(holdings) == 0:
-            print("[持仓] 方法2失败，尝试基金公司官网/天天基金APP接口...")
+            logger.info("[持仓] 方法2失败，尝试基金公司官网/天天基金APP接口...")
             holdings = self._fetch_holdings_xueqiu(top)
         
         if not holdings or len(holdings) == 0:
-            print(f"[持仓] 所有方法均无法获取持仓数据")
+            logger.info(f"[持仓] 所有方法均无法获取持仓数据")
             return []
         
-        print(f"[持仓] OK 共获取 {len(holdings)} 条持仓记录")
+        logger.info(f"[持仓] OK 共获取 {len(holdings)} 条持仓记录")
         
         # 批量获取股票实时价格（爬取腾讯/新浪/网易）
         if holdings:
             self._get_stock_prices(holdings)
             # 打印价格获取结果
             success = sum(1 for h in holdings if h.get('price') is not None)
-            print(f"[持仓] 价格获取: {success}/{len(holdings)} 成功")
+            logger.info(f"[持仓] 价格获取: {success}/{len(holdings)} 成功")
         
         return holdings
 
@@ -573,7 +580,7 @@ class FundAnalyzer:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'http://fund.eastmoney.com/'
             }
-            print(f"[持仓·方法1] 请求: {url}")
+            logger.info(f"[持仓·方法1] 请求: {url}")
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
                 return []
@@ -611,12 +618,12 @@ class FundAnalyzer:
                         'change_pct': None
                     })
             if holdings:
-                print(f"[持仓·方法1] OK 获取到 {len(holdings)} 条持仓")
+                logger.info(f"[持仓·方法1] OK 获取到 {len(holdings)} 条持仓")
                 for h in holdings[:3]:
-                    print(f"  {h['name']} ({h['code']}) - {h['ratio']}")
+                    logger.info(f"  {h['name']} ({h['code']}) - {h['ratio']}")
             return holdings
         except Exception as e:
-            print(f"[持仓·方法1] 失败: {e}")
+            logger.info(f"[持仓·方法1] 失败: {e}")
             return []
 
     def _fetch_holdings_eastmoney2(self, top=10):
@@ -628,7 +635,7 @@ class FundAnalyzer:
                 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)',
                 'Referer': 'https://fund.eastmoney.com/'
             }
-            print(f"[持仓·方法2] 请求东方财富: {url[:80]}")
+            logger.info(f"[持仓·方法2] 请求东方财富: {url[:80]}")
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
@@ -648,11 +655,11 @@ class FundAnalyzer:
                                 'change': None,
                                 'change_pct': None
                             })
-                    print(f"[持仓·方法2] 获取到 {len(holdings)} 条")
+                    logger.info(f"[持仓·方法2] 获取到 {len(holdings)} 条")
                     return holdings
             return []
         except Exception as e:
-            print(f"[持仓·方法2] 失败: {e}")
+            logger.info(f"[持仓·方法2] 失败: {e}")
             return []
 
     def _fetch_holdings_xueqiu(self, top=10):
@@ -664,7 +671,7 @@ class FundAnalyzer:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': f'http://fundf10.eastmoney.com/jjcc_{self.fund_code}.html'
             }
-            print(f"[持仓·方法3] 请求: {url}")
+            logger.info(f"[持仓·方法3] 请求: {url}")
             resp = requests.get(url, headers=headers, timeout=10)
             resp.encoding = 'utf-8'
             if resp.status_code == 200:
@@ -688,11 +695,11 @@ class FundAnalyzer:
                                 'change': None,
                                 'change_pct': None
                             })
-                    print(f"[持仓·方法3] 获取到 {len(holdings)} 条")
+                    logger.info(f"[持仓·方法3] 获取到 {len(holdings)} 条")
                     return holdings
             return []
         except Exception as e:
-            print(f"[持仓·方法3] 失败: {e}")
+            logger.info(f"[持仓·方法3] 失败: {e}")
             return []
 
     def _fetch_holdings_qdii(self, top=10):
@@ -704,7 +711,7 @@ class FundAnalyzer:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'http://fundf10.eastmoney.com/'
             }
-            print(f"[持仓·方法4-QDII] 请求港股持仓: {url[:80]}")
+            logger.info(f"[持仓·方法4-QDII] 请求港股持仓: {url[:80]}")
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 content_match = re.search(r'content:"(.*?)",', resp.text, re.DOTALL)
@@ -731,16 +738,16 @@ class FundAnalyzer:
                                     'change_pct': None
                                 })
                         if holdings:
-                            print(f"[持仓·方法4-QDII] 获取到 {len(holdings)} 条港股持仓")
+                            logger.info(f"[持仓·方法4-QDII] 获取到 {len(holdings)} 条港股持仓")
                             return holdings
             return []
         except Exception as e:
-            print(f"[持仓·方法4-QDII] 失败: {e}")
+            logger.info(f"[持仓·方法4-QDII] 失败: {e}")
             return []
     
     def _get_stock_prices(self, holdings):
         """批量获取所有持仓股票实时价格（腾讯财经+新浪财经+网易财经，一定要成功）"""
-        print(f"[持仓] 开始获取 {len(holdings)} 只股票实时价格...")
+        logger.info(f"[持仓] 开始获取 {len(holdings)} 只股票实时价格...")
         
         # 收集所有需要获取的代码，构建映射
         code_map = {}
@@ -750,24 +757,24 @@ class FundAnalyzer:
         # 方法1：腾讯财经API（主要方式，支持A股+港股+北交所）
         success = self._fetch_tencent_prices(holdings, code_map)
         s1 = sum(1 for h in holdings if h.get('price') is not None)
-        print(f"[持仓] 腾讯API完成: {s1}/{len(holdings)} 只股票有价格")
+        logger.info(f"[持仓] 腾讯API完成: {s1}/{len(holdings)} 只股票有价格")
         
         # 方法2：新浪财经API（备用）
         if s1 < len(holdings):
-            print("[持仓] 腾讯API不完整，尝试新浪财经...")
+            logger.info("[持仓] 腾讯API不完整，尝试新浪财经...")
             self._fetch_sina_prices(holdings, code_map)
             s2 = sum(1 for h in holdings if h.get('price') is not None)
-            print(f"[持仓] 新浪API完成: {s2}/{len(holdings)} 只股票有价格")
+            logger.info(f"[持仓] 新浪API完成: {s2}/{len(holdings)} 只股票有价格")
         
         # 方法3：网易财经API（备用）
         if s1 < len(holdings):
-            print("[持仓] 新浪API不完整，尝试网易财经...")
+            logger.info("[持仓] 新浪API不完整，尝试网易财经...")
             self._fetch_163_prices(holdings, code_map)
             s3 = sum(1 for h in holdings if h.get('price') is not None)
-            print(f"[持仓] 网易API完成: {s3}/{len(holdings)} 只股票有价格")
+            logger.info(f"[持仓] 网易API完成: {s3}/{len(holdings)} 只股票有价格")
         
         final = sum(1 for h in holdings if h.get('price') is not None)
-        print(f"[持仓] 所有方法完成: {final}/{len(holdings)} 只股票有价格")
+        logger.info(f"[持仓] 所有方法完成: {final}/{len(holdings)} 只股票有价格")
 
     def _fetch_tencent_prices(self, holdings, code_map):
         """腾讯财经API获取股票价格（支持A股+港股+美股+北交所）"""
@@ -863,19 +870,19 @@ class FundAnalyzer:
                                 holdings[idx]['change'] = round(change, 4)
                                 holdings[idx]['change_pct'] = round(change_pct, 2)
                                 success_count += 1
-                                print(f"[腾讯] OK {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
+                                logger.info(f"[腾讯] OK {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
                         except (ValueError, IndexError):
                             continue
                     
                     time.sleep(random.uniform(0.2, 0.5))
                 except Exception as e:
-                    print(f"[腾讯] 批次失败: {e}")
+                    logger.info(f"[腾讯] 批次失败: {e}")
                     time.sleep(random.uniform(0.3, 0.6))
                     continue
             
             return success_count > 0
         except Exception as e:
-            print(f"[腾讯] 整体失败: {e}")
+            logger.info(f"[腾讯] 整体失败: {e}")
             return False
 
     def _fetch_sina_prices(self, holdings, code_map):
@@ -957,19 +964,19 @@ class FundAnalyzer:
                                 holdings[idx]['change'] = change
                                 holdings[idx]['change_pct'] = change_pct
                                 success_count += 1
-                                print(f"[新浪] OK {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
+                                logger.info(f"[新浪] OK {stock_code}: 价格={price}, 涨跌={change_pct:.2f}%")
                         except (ValueError, IndexError):
                             continue
                     
                     time.sleep(random.uniform(0.2, 0.5))
                 except Exception as e:
-                    print(f"[新浪] 批次失败: {e}")
+                    logger.info(f"[新浪] 批次失败: {e}")
                     time.sleep(random.uniform(0.3, 0.6))
                     continue
             
             return success_count > 0
         except Exception as e:
-            print(f"[新浪] 整体失败: {e}")
+            logger.info(f"[新浪] 整体失败: {e}")
             return False
 
     def _fetch_163_prices(self, holdings, code_map):
@@ -1025,15 +1032,15 @@ class FundAnalyzer:
                                         holdings[idx]['change'] = change
                                         holdings[idx]['change_pct'] = change_pct
                                         success_count += 1
-                                        print(f"[网易] OK {sc}: 价格={price}, 涨跌={change_pct:.2f}%")
+                                        logger.info(f"[网易] OK {sc}: 价格={price}, 涨跌={change_pct:.2f}%")
                 except Exception as e:
-                    print(f"[网易] 失败 {code}: {e}")
+                    logger.info(f"[网易] 失败 {code}: {e}")
                     time.sleep(random.uniform(0.1, 0.3))
                     continue
             
             return success_count > 0
         except Exception as e:
-            print(f"[网易] 整体失败: {e}")
+            logger.info(f"[网易] 整体失败: {e}")
             return False
 
     def _fetch_prices(self, holdings, stock_codes, code_map, market_type):
@@ -1049,15 +1056,15 @@ class FundAnalyzer:
             codes_str = ','.join(tencent_codes)
             url = f"http://qt.gtimg.cn/q={codes_str}"
 
-            print(f"[持仓] 请求腾讯API ({market_type}): {len(tencent_codes)} 只股票")
+            logger.info(f"[持仓] 请求腾讯API ({market_type}): {len(tencent_codes)} 只股票")
             response = requests.get(url, timeout=10)
             response.encoding = 'utf-8'
-            print(f"[持仓] 腾讯API响应状态: {response.status_code}")
+            logger.info(f"[持仓] 腾讯API响应状态: {response.status_code}")
 
             # 腾讯返回格式: var hq_str_sh600000="xxxx,xxxx,...";
             # 解析所有股票数据
             matched_count = 0
-            print(f"[持仓] 腾讯API响应长度: {len(response.text)} 字符")
+            logger.info(f"[持仓] 腾讯API响应长度: {len(response.text)} 字符")
 
             for i, full_code in enumerate(stock_codes[:50]):
                 market_code, stock_code = full_code.split('.')
@@ -1079,9 +1086,9 @@ class FundAnalyzer:
                             holdings[idx]['change'] = change
                             holdings[idx]['change_pct'] = change_pct
                             matched_count += 1
-                            print(f"[持仓] OK {stock_code}: 价格={price}, 涨跌={change_pct}%")
+                            logger.info(f"[持仓] OK {stock_code}: 价格={price}, 涨跌={change_pct}%")
 
-            print(f"[持仓] {market_type}匹配了 {matched_count} 只股票")
+            logger.info(f"[持仓] {market_type}匹配了 {matched_count} 只股票")
 
             if matched_count > 0:
                 return True  # 已获取部分数据，返回成功
@@ -1093,10 +1100,10 @@ class FundAnalyzer:
                 data = {}
 
             if 'data' in data:
-                print(f"[持仓] data字段: {list(data['data'].keys())}")
+                logger.info(f"[持仓] data字段: {list(data['data'].keys())}")
                 if 'diff' in data['data']:
                     diff_count = len(data['data']['diff'])
-                    print(f"[持仓] 找到 {diff_count} 条股票数据")
+                    logger.info(f"[持仓] 找到 {diff_count} 条股票数据")
                     matched_count = 0
                     for item in data['data']['diff']:
                         market_code = item.get('f13', '')
@@ -1110,21 +1117,24 @@ class FundAnalyzer:
                                 holdings[idx]['change'] = item.get('f4', 0)  # 涨跌额
                                 holdings[idx]['change_pct'] = item.get('f3', 0)  # 涨跌幅
                                 matched_count += 1
-                                print(f"[持仓] OK {stock_code}: 价格={holdings[idx]['price']}, 涨跌={holdings[idx]['change_pct']}%")
+                                logger.info(f"[持仓] OK {stock_code}: 价格={holdings[idx]['price']}, 涨跌={holdings[idx]['change_pct']}%")
                             else:
-                                print(f"[持仓] FAIL {stock_code}: 价格为0或空")
+                                logger.info(f"[持仓] FAIL {stock_code}: 价格为0或空")
                         else:
-                            print(f"[持仓] ? {full_code}: 不在映射中")
-                    print(f"[持仓] {market_type}匹配了 {matched_count} 只股票")
+                            logger.info(f"[持仓] ? {full_code}: 不在映射中")
+                    logger.info(f"[持仓] {market_type}匹配了 {matched_count} 只股票")
                 else:
-                    print(f"[持仓] 没有找到diff字段")
+                    logger.info(f"[持仓] 没有找到diff字段")
             else:
-                print(f"[持仓] 没有找到data字段, 完整响应: {data}")
+                logger.info(f"[持仓] 没有找到data字段, 完整响应: {data}")
 
         except Exception as e:
-            print(f"[持仓] 获取{market_type}价格失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.info(f"[持仓] 获取{market_type}价格失败: {e}")
+            logger.exception(f"error in fund_analyzer")
+
+    # ═══════════════════════════════════════
+    #  SECTION 3: 盈亏计算与风险指标
+    # ═══════════════════════════════════════
 
     def calculate_profit_loss(self, buy_price, shares):
         """计算盈亏"""
@@ -1155,6 +1165,10 @@ class FundAnalyzer:
         }
         
         return result
+
+    # ═══════════════════════════════════════
+    #  SECTION 4: 策略分析与基准对比
+    # ═══════════════════════════════════════
 
     def analyze_strategy(self, fund_data=None, days=30):
         """分析买卖策略"""
@@ -1243,7 +1257,7 @@ class FundAnalyzer:
                 strategy['confidence'] = 50
         
         except Exception as e:
-            print(f"策略分析失败: {e}")
+            logger.info(f"策略分析失败: {e}")
             strategy['reasons'].append('数据不足，建议获取更多信息后再决策')
             strategy['confidence'] = 30
         
@@ -1318,7 +1332,7 @@ class FundAnalyzer:
                 'history': [{'manager': manager}]  # 简化处理，仅返回当前经理
             }
         except Exception as e:
-            print(f"[经理历史] 获取失败: {e}")
+            logger.info(f"[经理历史] 获取失败: {e}")
             return {'manager': '未知', 'history': [], 'recent_changed': False}
     
     def get_fund_strategy(self):
@@ -1376,7 +1390,7 @@ class FundAnalyzer:
             
             return result
         except Exception as e:
-            print(f"[基金策略] 获取失败: {e}")
+            logger.info(f"[基金策略] 获取失败: {e}")
             return {
                 'investment_objective': '',
                 'investment_strategy': '',
@@ -1410,7 +1424,7 @@ class FundAnalyzer:
                             'type': '公告'
                         })
         except Exception as e:
-            print(f"[基金新闻-公告] 获取失败: {e}")
+            logger.info(f"[基金新闻-公告] 获取失败: {e}")
         
         # 2. 天天基金网基金资讯
         if len(news_list) < limit:
@@ -1429,7 +1443,7 @@ class FundAnalyzer:
                                 'type': '资讯'
                             })
             except Exception as e:
-                print(f"[基金新闻-天天基金] 获取失败: {e}")
+                logger.info(f"[基金新闻-天天基金] 获取失败: {e}")
         
         # 去重
         seen = set()
@@ -1478,8 +1492,8 @@ class FundAnalyzer:
             return records
 
         except Exception as e:
-            traceback.print_exc()
-            print(f"[基准数据-区间] 获取失败: {e}")
+            logger.exception(f"error in fund_analyzer")
+            logger.info(f"[基准数据-区间] 获取失败: {e}")
             return []
 
     def get_benchmark_data(self, days=120):
@@ -1505,7 +1519,7 @@ class FundAnalyzer:
                     return result
             return []
         except Exception as e:
-            print(f"[基准] 获取沪深300失败: {e}")
+            logger.info(f"[基准] 获取沪深300失败: {e}")
             return []
 
     def get_risk_metrics(self, days=365):
@@ -1559,9 +1573,8 @@ class FundAnalyzer:
                 'annualized_return': round(annualized_return * 100, 2)
             }
         except Exception as e:
-            print(f"[风险指标] 计算失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.info(f"[风险指标] 计算失败: {e}")
+            logger.exception(f"error in fund_analyzer")
             return {'sharpe_ratio': None, 'max_drawdown': None, 'volatility': None,
                     'sortino_ratio': None, 'calmar_ratio': None, 'annualized_return': None}
 
@@ -1664,7 +1677,7 @@ class FundAnalyzer:
                 'reason': reason
             }
         except Exception as e:
-            print(f"[长期稳定性] 分析失败: {e}")
+            logger.info(f"[长期稳定性] 分析失败: {e}")
             return {'score': 0, 'recommendation': '分析失败', 'reason': str(e)}
 
     def get_downside_prediction(self, days=252):
@@ -1752,7 +1765,7 @@ class FundAnalyzer:
                 'reason': reason
             }
         except Exception as e:
-            print(f"[下跌预测] 分析失败: {e}")
+            logger.info(f"[下跌预测] 分析失败: {e}")
             return {'score': 0, 'recommendation': '分析失败', 'reason': str(e)}
 
     def get_upside_prediction(self, days=180):
@@ -1848,7 +1861,7 @@ class FundAnalyzer:
                 'reason': reason
             }
         except Exception as e:
-            print(f"[上涨预测] 分析失败: {e}")
+            logger.info(f"[上涨预测] 分析失败: {e}")
             return {'score': 0, 'recommendation': '分析失败', 'reason': str(e)}
 
     def _ema(self, data, period):
@@ -1889,7 +1902,7 @@ class FundAnalyzer:
                 red_pattern = re.findall(r'持有期限[^<]*<td[^>]*>([^<]+)</td>', text)
                 red_rates = re.findall(r'<td[^>]*>([\d.]+%[^<]*)</td>', text)
         except Exception as e:
-            print(f"[费率] 获取失败: {e}")
+            logger.info(f"[费率] 获取失败: {e}")
         return result
 
 

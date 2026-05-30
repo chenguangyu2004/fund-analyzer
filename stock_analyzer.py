@@ -5,239 +5,23 @@ import requests
 import re
 import json
 from datetime import datetime
+from logger import get_logger
+import config
+
+logger = get_logger("stock_analyzer")
 
 
 class StockAnalyzer:
     """股票分析类"""
     
-    # 按行业分类的龙头股数据库
-    INDUSTRY_LEADERS = {
-        '新能源汽车': [
-            {'code': '002594', 'name': '比亚迪'},
-            {'code': '300750', 'name': '宁德时代'},
-            {'code': '600733', 'name': '北汽蓝谷'},
-            {'code': '600418', 'name': '江淮汽车'},
-            {'code': '601238', 'name': '广汽集团'},
-            {'code': '000980', 'name': '众泰汽车'},
-            {'code': '002126', 'name': '银轮股份'},
-            {'code': '300124', 'name': '汇川技术'},
-            {'code': '600104', 'name': '上汽集团'},
-            {'code': '000625', 'name': '长安汽车'},
-        ],
-        '白酒': [
-            {'code': '600519', 'name': '贵州茅台'},
-            {'code': '000858', 'name': '五粮液'},
-            {'code': '000568', 'name': '泸州老窖'},
-            {'code': '002304', 'name': '洋河股份'},
-            {'code': '000596', 'name': '古井贡酒'},
-            {'code': '600197', 'name': '伊力特'},
-            {'code': '603369', 'name': '今世缘'},
-            {'code': '000799', 'name': '酒鬼酒'},
-            {'code': '603589', 'name': '口子窖'},
-            {'code': '000869', 'name': '张裕A'},
-        ],
-        '银行': [
-            {'code': '600036', 'name': '招商银行'},
-            {'code': '601398', 'name': '工商银行'},
-            {'code': '601288', 'name': '农业银行'},
-            {'code': '600000', 'name': '浦发银行'},
-            {'code': '601328', 'name': '交通银行'},
-            {'code': '601818', 'name': '光大银行'},
-            {'code': '601166', 'name': '兴业银行'},
-            {'code': '600015', 'name': '华夏银行'},
-            {'code': '601009', 'name': '南京银行'},
-            {'code': '600016', 'name': '民生银行'},
-        ],
-        '保险': [
-            {'code': '601318', 'name': '中国平安'},
-            {'code': '601628', 'name': '中国人寿'},
-            {'code': '601601', 'name': '中国太保'},
-            {'code': '601319', 'name': '中国人保'},
-            {'code': '601336', 'name': '新华保险'},
-        ],
-        '家电': [
-            {'code': '000333', 'name': '美的集团'},
-            {'code': '000651', 'name': '格力电器'},
-            {'code': '600690', 'name': '海尔智家'},
-            {'code': '000100', 'name': 'TCL科技'},
-            {'code': '002032', 'name': '苏泊尔'},
-            {'code': '002508', 'name': '老板电器'},
-            {'code': '603486', 'name': '科沃斯'},
-        ],
-        '医药': [
-            {'code': '600276', 'name': '恒瑞医药'},
-            {'code': '000538', 'name': '云南白药'},
-            {'code': '600196', 'name': '复星医药'},
-            {'code': '300760', 'name': '迈瑞医疗'},
-            {'code': '301136', 'name': '义翘神州'},
-            {'code': '002821', 'name': '凯莱英'},
-            {'code': '300015', 'name': '爱尔眼科'},
-            {'code': '000004', 'name': '国华网安'},
-        ],
-        '互联网': [
-            {'code': '00700', 'name': '腾讯控股'},
-            {'code': '09988', 'name': '阿里巴巴'},
-            {'code': '03690', 'name': '美团'},
-            {'code': '09888', 'name': '网易'},
-            {'code': '01810', 'name': '小米集团'},
-        ],
-        '光伏': [
-            {'code': '300274', 'name': '阳光电源'},
-            {'code': '601012', 'name': '隆基绿能'},
-            {'code': '600438', 'name': '通威股份'},
-            {'code': '002459', 'name': '晶澳科技'},
-            {'code': '601615', 'name': '明阳智能'},
-            {'code': '688599', 'name': '天合光能'},
-        ],
-        '半导体': [
-            {'code': '688981', 'name': '中芯国际'},
-            {'code': '002371', 'name': '北方华创'},
-            {'code': '603986', 'name': '兆易创新'},
-            {'code': '688008', 'name': '澜起科技'},
-            {'code': '688012', 'name': '中微公司'},
-            {'code': '300976', 'name': '达瑞电子'},
-        ],
-        '旅游零售': [
-            {'code': '601888', 'name': '中国中免'},
-            {'code': '000069', 'name': '华侨城A'},
-            {'code': '600054', 'name': '黄山旅游'},
-            {'code': '002059', 'name': '云南旅游'},
-            {'code': '600138', 'name': '中青旅'},
-        ],
-        '券商': [
-            {'code': '600030', 'name': '中信证券'},
-            {'code': '000776', 'name': '广发证券'},
-            {'code': '600837', 'name': '海通证券'},
-            {'code': '601211', 'name': '国泰君安'},
-            {'code': '000166', 'name': '申万宏源'},
-        ],
-        '房地产': [
-            {'code': '600048', 'name': '保利发展'},
-            {'code': '000002', 'name': '万科A'},
-            {'code': '001979', 'name': '招商蛇口'},
-            {'code': '600606', 'name': '绿地控股'},
-            {'code': '600383', 'name': '金地集团'},
-        ],
-        '基建': [
-            {'code': '601668', 'name': '中国建筑'},
-            {'code': '601390', 'name': '中国中铁'},
-            {'code': '600585', 'name': '海螺水泥'},
-            {'code': '601186', 'name': '中国铁建'},
-        ],
-        '食品': [
-            {'code': '600887', 'name': '伊利股份'},
-            {'code': '603288', 'name': '海天味业'},
-            {'code': '000895', 'name': '双汇发展'},
-            {'code': '002714', 'name': '牧原股份'},
-            {'code': '300498', 'name': '温氏股份'},
-        ],
-        '云计算': [
-            {'code': '300442', 'name': '润泽科技'},
-            {'code': '300383', 'name': '光环新网'},
-            {'code': '300846', 'name': '首都在线'},
-            {'code': '300170', 'name': '汉得信息'},
-            {'code': '300378', 'name': '鼎捷软件'},
-            {'code': '600588', 'name': '用友网络'},
-            {'code': '300451', 'name': '创业慧康'},
-        ],
-        '人工智能': [
-            {'code': '002230', 'name': '科大讯飞'},
-            {'code': '300024', 'name': '机器人'},
-            {'code': '300418', 'name': '昆仑万维'},
-            {'code': '688787', 'name': '海天瑞声'},
-            {'code': '688256', 'name': '寒武纪'},
-        ],
-        '软件': [
-            {'code': '300624', 'name': '万兴科技'},
-            {'code': '002065', 'name': '东华软件'},
-            {'code': '600571', 'name': '信雅达'},
-            {'code': '300229', 'name': '拓尔思'},
-            {'code': '300271', 'name': '华宇软件'},
-        ],
-        '医疗设备': [
-            {'code': '300003', 'name': '乐普医疗'},
-            {'code': '300529', 'name': '健帆生物'},
-            {'code': '300760', 'name': '迈瑞医疗'},
-            {'code': '002432', 'name': '九安医疗'},
-            {'code': '300396', 'name': '迪瑞医疗'},
-        ],
-        '宠物经济': [
-            {'code': '301498', 'name': '乖宝宠物'},
-            {'code': '300673', 'name': '佩蒂股份'},
-            {'code': '002891', 'name': '中宠股份'},
-            {'code': '001222', 'name': '源飞宠物'},
-            {'code': '301335', 'name': '天元宠物'},
-            {'code': '001206', 'name': '依依股份'},
-        ],
-    }
+    # 行业龙头股数据库（从 data/industry_leaders.json 加载）
+    INDUSTRY_LEADERS = config.load_data_json("industry_leaders.json", {})
     
-    # 股票代码到行业的映射
-    STOCK_INDUSTRY_MAP = {
-        # 新能源汽车
-        '002594': '新能源汽车', '300750': '新能源汽车', '600733': '新能源汽车',
-        '600418': '新能源汽车', '601238': '新能源汽车', '000980': '新能源汽车',
-        '002126': '新能源汽车', '300124': '新能源汽车', '600104': '新能源汽车',
-        '000625': '新能源汽车', '1211': '新能源汽车', '01211': '新能源汽车',
-        # 白酒
-        '600519': '白酒', '000858': '白酒', '000568': '白酒', '002304': '白酒',
-        '000596': '白酒', '600197': '白酒', '603369': '白酒', '000799': '白酒',
-        # 保险
-        '601318': '保险', '601628': '保险', '601601': '保险', '601319': '保险',
-        # 银行
-        '600036': '银行', '601398': '银行', '601288': '银行', '600000': '银行',
-        '601328': '银行', '601818': '银行', '601166': '银行', '600015': '银行',
-        # 家电
-        '000333': '家电', '000651': '家电', '600690': '家电', '000100': '家电',
-        # 医药
-        '600276': '医药', '000538': '医药', '600196': '医药',
-        '300015': '医药', '002007': '医药',
-        # 光伏
-        '300274': '光伏', '601012': '光伏', '600438': '光伏', '002459': '光伏',
-        # 互联网/云计算
-        '00700': '互联网', '09988': '互联网', '03690': '互联网', '00788': '互联网',
-        '01810': '互联网', '09888': '互联网', '300846': '云计算', '300170': '云计算',
-        '300050': '计算机/软件服务', '300383': '计算机/软件服务', '002230': '计算机/软件服务',
-        '300024': '机器人', '300418': '云计算',
-        # 半导体
-        '688981': '半导体', '002371': '半导体', '603986': '半导体',
-        '688008': '半导体', '688012': '半导体', '300976': '半导体',
-        # 宠物经济
-        '301498': '宠物经济', '300673': '宠物经济', '002891': '宠物经济',
-        '001222': '宠物经济', '301335': '宠物经济', '001206': '宠物经济',
-        # 医疗设备
-        '300003': '医疗设备', '300760': '医疗设备', '002432': '医疗设备',
-        '300624': '软件', '688787': '软件',
-        # 其他
-        '601888': '旅游零售', '600030': '券商', '600048': '房地产',
-        '601668': '基建', '601390': '基建', '600585': '基建',
-    }
+    # 股票代码到行业映射（从 data/stock_industry_map.json 加载）
+    STOCK_INDUSTRY_MAP = config.load_data_json("stock_industry_map.json", {})
     
-    # 行业映射扩展（根据股票名称关键词）
-    INDUSTRY_KEYWORDS = {
-        '新能源': '新能源汽车',
-        '汽车': '新能源汽车',
-        '白酒': '白酒',
-        '酒': '白酒',
-        '银行': '银行',
-        '保险': '保险',
-        '医药': '医药',
-        '医疗': '医药',
-        '健康': '医药',
-        '光伏': '光伏',
-        '能源': '光伏',
-        '互联网': '互联网',
-        '云': '计算机/软件服务',
-        '数据': '计算机/软件服务',
-        '软件': '计算机/软件服务',
-        '计算机': '计算机/软件服务',
-        '信息': '计算机/软件服务',
-        '讯飞': '计算机/软件服务',
-        '半导': '半导体',
-        '芯片': '半导体',
-        '宠物': '宠物经济',
-        '设备': '医疗设备',
-        '器械': '医疗设备',
-    }
+    # 行业关键词映射（从 data/industry_keywords.json 加载）
+    INDUSTRY_KEYWORDS = config.load_data_json("industry_keywords.json", {})
     
     def __init__(self, stock_code):
         self.stock_code = stock_code
@@ -439,7 +223,7 @@ class StockAnalyzer:
                                 'change_pct': round(change_pct, 2),
                             }
         except Exception as e:
-            print(f"[行情] 获取失败: {e}")
+            logger.info(f"[行情] 获取失败: {e}")
         
         return None
     
@@ -504,7 +288,7 @@ class StockAnalyzer:
                         result['dividend_yield'] = dividend
             return result if result else None
         except Exception as e:
-            print(f"[腾讯补充数据] 获取失败: {e}")
+            logger.info(f"[腾讯补充数据] 获取失败: {e}")
             return None
     
     def _get_company_info(self):
@@ -541,7 +325,7 @@ class StockAnalyzer:
                         result['name'] = parts[0]
                         result['company_name'] = parts[0]
         except Exception as e:
-            print(f"[公司信息-新浪] 获取失败: {e}")
+            logger.info(f"[公司信息-新浪] 获取失败: {e}")
         
         # 尝试从东方财富获取更多信息
         try:
@@ -565,7 +349,7 @@ class StockAnalyzer:
                         result['name'] = d.get('f58', '')
                         result['company_name'] = d.get('f58', '')
         except Exception as e:
-            print(f"[公司信息-EM] 获取失败: {e}")
+            logger.info(f"[公司信息-EM] 获取失败: {e}")
         
         # 获取行业信息
         industry = self._get_stock_industry()
@@ -608,7 +392,7 @@ class StockAnalyzer:
                 if data and data.get('data'):
                     industry_em = data['data'].get('f100', '')  # 东方财富行业
                     if industry_em:
-                        print(f"[行业识别] 东方财富行业: {industry_em}")
+                        logger.info(f"[行业识别] 东方财富行业: {industry_em}")
                         # 映射东方财富行业到我们的分类
                         industry_mapping = {
                             '计算机': '计算机/软件服务', '软件': '计算机/软件服务', 'IT服务': '计算机/软件服务',
@@ -637,7 +421,7 @@ class StockAnalyzer:
                         # 如果没有匹配到映射，直接使用东方财富的行业名称
                         return industry_em
         except Exception as e:
-            print(f"[行业识别] EM接口失败: {e}")
+            logger.info(f"[行业识别] EM接口失败: {e}")
         
         # 2. 从映射表获取
         industry = self.STOCK_INDUSTRY_MAP.get(code, '')
@@ -666,15 +450,15 @@ class StockAnalyzer:
                 match = re.search(r'["\']([^"\']+)["\']', response.text)
                 if match:
                     stock_name = match.group(1).split(',')[0] if ',' in match.group(1) else match.group(1)
-                    print(f"[行业识别] 股票名称: {stock_name}")
+                    logger.info(f"[行业识别] 股票名称: {stock_name}")
                     for keyword, ind in self.INDUSTRY_KEYWORDS.items():
                         if keyword in stock_name:
-                            print(f"[行业识别] 匹配成功: {keyword} -> {ind}")
+                            logger.info(f"[行业识别] 匹配成功: {keyword} -> {ind}")
                             return ind
         except Exception as e:
-            print(f"[行业识别] 获取名称失败: {e}")
+            logger.info(f"[行业识别] 获取名称失败: {e}")
         
-        print(f"[行业识别] 无法识别 {code} ({stock_name}) 的行业")
+        logger.info(f"[行业识别] 无法识别 {code} ({stock_name}) 的行业")
         return ''
     
     def _get_holder_analysis(self):
@@ -702,7 +486,7 @@ class StockAnalyzer:
                             'holder_data': items[:4],
                         }
         except Exception as e:
-            print(f"[持股分析] 获取失败: {e}")
+            logger.info(f"[持股分析] 获取失败: {e}")
         
         # 返回一些默认信息
         return {
@@ -713,107 +497,200 @@ class StockAnalyzer:
         }
     
     def get_stock_news(self, limit=20):
-        """获取股票相关新闻 - 使用新浪个股新闻页面（最准确、最稳定）"""
+        """获取股票相关新闻 — 多源聚合（A股双源 + 港股双源 + 兜底搜索）"""
         news_list = []
         code = self.stock_code
-        
-        # 确定新浪symbol
-        if code.startswith('6'):
-            sina_symbol = f"sh{code}"
-        elif code.startswith('0') or code.startswith('3'):
-            sina_symbol = f"sz{code}"
-        elif len(code) == 5:
+        is_a_stock = len(code) == 6 and code.isdigit()
+        is_hk_stock = len(code) == 5
+
+        # 获取股票名称用于关键词搜索
+        stock_name = self._stock_name_cache
+        if not stock_name and is_hk_stock:
+            stock_name = self._get_stock_name_from_api(code)
+            self._stock_name_cache = stock_name
+
+        # ══════════════════════════════════
+        # 新浪个股新闻页（A股+港股均支持）
+        # ══════════════════════════════════
+        if is_a_stock:
+            if code.startswith('6'):
+                sina_symbol = f"sh{code}"
+            elif code.startswith('0') or code.startswith('3'):
+                sina_symbol = f"sz{code}"
+            else:
+                sina_symbol = f"sz{code}"
+        elif is_hk_stock:
             sina_symbol = f"hk{code}"
         else:
-            sina_symbol = f"sz{code}"
-        
-        # 1. 新浪个股新闻页面（最稳定、最准确的个股新闻来源）
-        try:
-            url = f'https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/{sina_symbol}/pageno/1.phtml'
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://finance.sina.com.cn/'
-            }
-            response = self.session.get(url, headers=headers, timeout=10)
-            response.encoding = 'gbk'
-            
-            if response.status_code == 200:
-                # 解析HTML - 格式: &nbsp;&nbsp;&nbsp;&nbsp;2026-05-23&nbsp;10:35&nbsp;&nbsp;<a href='url'>标题</a>
-                pattern = r"&nbsp;(\d{4}-\d{2}-\d{2})\s*&nbsp;(\d{2}:\d{2})?\s*&nbsp;.*?<a[^>]*href=['\"]([^'\"]*)['\"][^>]*>([^<]*)</a>"
-                matches = re.findall(pattern, response.text)
-                print(f"[新浪个股新闻] 解析到 {len(matches)} 条")
-                
-                for date, time_str, news_url, title in matches:
-                    if not title.strip():
-                        continue
-                    title = title.strip()
-                    # 清理HTML实体
-                    title = title.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-                    pub_time = f"{date} {time_str}" if time_str else date
-                    
-                    news_list.append({
-                        'title': title,
-                        'publish_time': pub_time,
-                        'source': '新浪财经',
-                        'type': '新闻',
-                        'url': news_url
-                    })
-                    
-                    if len(news_list) >= limit:
-                        break
-        except Exception as e:
-            print(f"[新浪个股新闻] 获取失败: {e}")
-        
-        # 2. 东方财富公司公告（补充）
-        if len(news_list) < limit:
-            try:
-                if code.startswith('6'):
-                    secid = f"1.{code}"
-                elif code.startswith('0') or code.startswith('3'):
-                    secid = f"0.{code}"
-                elif len(code) == 5:
-                    secid = f"116.{code}"
-                else:
-                    secid = f"0.{code}"
-                
-                url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={limit - len(news_list)}&page_index=1&ann_type=SHA%2CSZA&client_source=web&stock_list={secid}'
-                headers = {
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://data.eastmoney.com/'
-                }
-                
-                response = self.session.get(url, headers=headers, timeout=8)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data and data.get('data'):
-                        items = data['data'].get('list', []) or []
-                        print(f"[东方财富公告] 获取到 {len(items)} 条")
-                        for item in items:
-                            title = item.get('title', '') or item.get('notice_title', '')
-                            pub_time = str(item.get('publish_time', ''))[:10]
-                            news_list.append({
-                                'title': title,
-                                'publish_time': pub_time,
-                                'source': '东方财富',
-                                'type': '公告',
-                                'url': f"https://data.eastmoney.com/notices/detail/{secid}/{item.get('notice_id', '')}.html"
-                            })
-                            if len(news_list) >= limit:
-                                break
-            except Exception as e:
-                print(f"[东方财富公告] 获取失败: {e}")
-        
+            sina_symbol = None
+
+        if sina_symbol:
+            self._fetch_sina_stock_page(news_list, sina_symbol, limit)
+
+        # ══════════════════════════════════
+        # A股补充：东方财富公告
+        # ══════════════════════════════════
+        if is_a_stock and len(news_list) < limit:
+            self._fetch_eastmoney_announce(news_list, code, limit)
+
+        # ══════════════════════════════════
+        # 港股补充：腾讯快讯
+        # ══════════════════════════════════
+        if is_hk_stock and len(news_list) < limit:
+            self._fetch_tencent_hk_quick(news_list, code, limit)
+
+        # ══════════════════════════════════
+        # 兜底：新浪搜索（只要知道名称）
+        # ══════════════════════════════════
+        if len(news_list) == 0 and stock_name and stock_name != code:
+            self._fetch_sina_search(news_list, stock_name, limit)
+
         # 去重
         seen_titles = set()
         unique_news = []
-        for news in news_list:
-            title = news.get('title', '')
-            if title and title not in seen_titles:
-                seen_titles.add(title)
-                unique_news.append(news)
-        
-        print(f"[新闻] 最终返回 {len(unique_news)} 条")
+        for n in news_list:
+            t = n.get('title', '')
+            if t and t not in seen_titles:
+                seen_titles.add(t)
+                unique_news.append(n)
+
+        logger.info(f"[新闻] 最终返回 {len(unique_news)} 条 (A股={is_a_stock} 港股={is_hk_stock})")
         return unique_news[:limit]
+
+    # ── 新闻子方法 ──
+
+    def _get_stock_name_from_api(self, code):
+        """从腾讯API获取股票名称"""
+        try:
+            symbol = f"hk{code.zfill(5)}"
+            url = f"http://qt.gtimg.cn/q={symbol}"
+            resp = self.session.get(url, timeout=5)
+            if resp.status_code == 200 and '~' in resp.text:
+                parts = resp.text.split('~')
+                if len(parts) > 2:
+                    return parts[1]
+        except Exception:
+            pass
+        return code
+
+    def _fetch_sina_stock_page(self, news_list, sina_symbol, limit):
+        """从新浪个股新闻页获取A股新闻"""
+        try:
+            url = f'https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/{sina_symbol}/pageno/1.phtml'
+            resp = self.session.get(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn/'}, timeout=10)
+            resp.encoding = 'gbk'
+
+            if resp.status_code == 200:
+                # 匹配: 日期 + 可选时间 + <a href="url" ...>标题</a>
+                pattern = r'(\d{4}-\d{2}-\d{2})\s*[\d:]*.*?<a[^>]*href\s*=\s*["\']([^"\']+)["\'][^>]*>\s*([^<]{4,})\s*</a>'
+                matches = re.findall(pattern, resp.text)
+                logger.info(f"[新浪个股新闻] 解析到 {len(matches)} 条")
+
+                for date, news_url, title in matches:
+                    title = title.strip()
+                    title = title.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"')
+                    if not title or len(title) < 4:
+                        continue
+                    news_list.append({
+                        'title': title,
+                        'publish_time': date,
+                        'source': '新浪财经',
+                        'type': '新闻',
+                        'url': news_url if news_url.startswith('http') else f'https:{news_url}',
+                    })
+                    if len(news_list) >= limit:
+                        break
+        except Exception as e:
+            logger.info(f"[新浪个股新闻] 获取失败: {e}")
+
+    def _fetch_eastmoney_announce(self, news_list, code, limit):
+        """从东方财富获取A股公司公告"""
+        try:
+            if code.startswith('6'):
+                secid = f"1.{code}"
+            else:
+                secid = f"0.{code}"
+
+            remain = limit - len(news_list)
+            url = f'https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size={remain}&page_index=1&ann_type=SHA%2CSZA&client_source=web&stock_list={secid}'
+            resp = self.session.get(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'}, timeout=8)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                items = (data.get('data') or {}).get('list', []) or []
+                logger.info(f"[东方财富公告] 获取到 {len(items)} 条")
+                for item in items:
+                    title = item.get('title', '') or item.get('notice_title', '')
+                    if not title:
+                        continue
+                    news_list.append({
+                        'title': title,
+                        'publish_time': str(item.get('publish_time', ''))[:10],
+                        'source': '东方财富',
+                        'type': '公告',
+                        'url': f"https://data.eastmoney.com/notices/detail/{secid}/{item.get('notice_id', '')}.html",
+                    })
+                    if len(news_list) >= limit:
+                        break
+        except Exception as e:
+            logger.info(f"[东方财富公告] 获取失败: {e}")
+
+    def _fetch_sina_search(self, news_list, keyword, limit):
+        """从新浪财经搜索API获取新闻（按股票名称关键词）"""
+        try:
+            from urllib.parse import quote
+            remain = limit - len(news_list)
+            url = f'https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&k={quote(keyword)}&num={remain}&page=1&r=0.5'
+            resp = self.session.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=8)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                items = (data.get('result') or {}).get('data', [])
+                logger.info(f"[新浪搜索] '{keyword}' → {len(items)} 条")
+                for item in items:
+                    title = item.get('title', '')
+                    if not title:
+                        continue
+                    news_list.append({
+                        'title': title,
+                        'publish_time': item.get('ctime', '')[:10],
+                        'source': '新浪财经',
+                        'type': '新闻',
+                        'url': item.get('url', ''),
+                    })
+                    if len(news_list) >= limit:
+                        break
+        except Exception as e:
+            logger.info(f"[新浪搜索] 获取失败: {e}")
+
+    def _fetch_tencent_hk_quick(self, news_list, code, limit):
+        """从腾讯财经获取港股关联快讯"""
+        try:
+            symbol = f"hk{code.zfill(5)}"
+            remain = limit - len(news_list)
+            # 腾讯自选股快讯接口
+            url = f'https://proxy.finance.qq.com/ifzqgtimg/appstock/news/info/search?symbol={symbol}&page=1&n={remain}'
+            resp = self.session.get(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://gu.qq.com/'}, timeout=8)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                items = (data.get('data') or {}).get('data', []) or []
+                logger.info(f"[腾讯快讯] {symbol} → {len(items)} 条")
+                for item in items:
+                    title = item.get('title', '')
+                    if not title:
+                        continue
+                    news_list.append({
+                        'title': title,
+                        'publish_time': item.get('publish_time', '')[:10] if item.get('publish_time') else '',
+                        'source': '腾讯财经',
+                        'type': '快讯',
+                        'url': item.get('url', ''),
+                    })
+                    if len(news_list) >= limit:
+                        break
+        except Exception as e:
+            logger.info(f"[腾讯快讯] 获取失败: {e}")
     
     def _get_industry_stocks(self, industry, limit=10):
         """获取同行业股票"""
@@ -903,7 +780,7 @@ class StockAnalyzer:
                                         'industry': industry,
                                     })
                             except Exception as e:
-                                print(f"[解析股票 {stock['code']}] 失败: {e}")
+                                logger.info(f"[解析股票 {stock['code']}] 失败: {e}")
                                 stocks.append({
                                     'code': stock['code'],
                                     'name': stock['name'],
@@ -912,7 +789,7 @@ class StockAnalyzer:
                                     'industry': industry,
                                 })
             except Exception as e:
-                print(f"[行业股票获取] 失败: {e}")
+                logger.info(f"[行业股票获取] 失败: {e}")
                 # 如果API失败，添加基本信息
                 for stock in filtered[:limit]:
                     stocks.append({
@@ -923,45 +800,40 @@ class StockAnalyzer:
                         'industry': industry,
                     })
         else:
-            print(f"[行业股票] 未找到行业 '{industry}'")
+            logger.info(f"[行业股票] 未找到行业 '{industry}'")
             return []
         
         return stocks[:limit]
     
     def get_industry_leaders(self, limit=10):
-        """获取行业龙头股 - 使用AI动态搜索，包含A股和港股"""
+        """获取行业龙头股 — 优先使用静态数据，AI仅作兜底"""
         industry = self._get_stock_industry()
-        stock_name = ''
-        
-        # 获取股票名称
-        try:
-            code = self.stock_code
-            if code.startswith('6'):
-                symbol = f"sh{code}"
-            elif code.startswith('0') or code.startswith('3'):
-                symbol = f"sz{code}"
-            elif len(code) == 5:
-                symbol = f"hk{code.zfill(5)}"
-            else:
-                symbol = f"sz{code}"
-            url = f'https://hq.sinajs.cn/list={symbol}'
-            headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.sina.com.cn'}
-            resp = self.session.get(url, headers=headers, timeout=5)
-            resp.encoding = 'gbk'
-            if resp.status_code == 200:
-                match = re.search(r'["\']([^"\']+)["\']', resp.text)
-                if match:
-                    stock_name = match.group(1).split(',')[0] if ',' in match.group(1) else match.group(1)
-        except:
-            pass
-        
-        # 使用AI API获取行业龙头股
+
+        # ═══════════════════════════════════
+        # 优先：静态行业龙头数据（准确、快速）
+        # ═══════════════════════════════════
+        if industry and industry in self.INDUSTRY_LEADERS:
+            leaders = self.INDUSTRY_LEADERS[industry]
+            filtered = [s for s in leaders if s['code'] != self.stock_code]
+            if filtered:
+                # 获取实时价格
+                stocks = self._get_industry_stocks(industry, limit)
+                if stocks:
+                    logger.info(f"[行业龙头-静态] {industry} → {len(stocks)} 只")
+                    return stocks
+                # 价格获取失败时返回基础信息
+                logger.info(f"[行业龙头-静态] {industry} → {len(filtered[:limit])} 只 (无价格)")
+                return [{'code': s['code'], 'name': s['name'], 'price': 0, 'change_pct': 0, 'market': 'A股' if len(s['code'])==6 else '港股', 'industry': industry} for s in filtered[:limit]]
+
+        # ═══════════════════════════════════
+        # 兜底：AI动态搜索（行业不在静态数据中时）
+        # ═══════════════════════════════════
         try:
             from deepseek_analyzer import DeepSeekAnalyzer
-            import os
-            api_key = os.environ.get('DEEPSEEK_API_KEY', '')
+            import config as _cfg
+            api_key = _cfg.DEEPSEEK_API_KEY
             
-            prompt = f"""请列出"{industry or stock_name or self.stock_code}"行业的龙头股，需要同时包含A股和港股。
+            prompt = f"""请列出"{industry or self.stock_code}"行业的龙头股，需要同时包含A股和港股。
 要求：
 1. 只返回JSON数组，不要其他文字
 2. 每个元素包含code(股票代码，A股6位数字，港股5位数字)和name(股票名称)和market("A股"或"港股")
@@ -973,7 +845,7 @@ class StockAnalyzer:
 [{{"code": "002230", "name": "科大讯飞", "market": "A股"}}, {{"code": "00700", "name": "腾讯控股", "market": "港股"}}]"""
 
             data = {
-                "model": "deepseek-chat",
+                "model": _cfg.DEEPSEEK_MODEL,
                 "messages": [
                     {"role": "system", "content": "你是股票数据库，只返回JSON数据，不要其他文字。"},
                     {"role": "user", "content": prompt}
@@ -988,7 +860,7 @@ class StockAnalyzer:
             }
             
             resp = requests.post(
-                "https://api.deepseek.com/chat/completions",
+                _cfg.DEEPSEEK_API_URL,
                 headers=headers, json=data, timeout=30
             )
             
@@ -1000,7 +872,7 @@ class StockAnalyzer:
                     content = json_match.group(0)
                 
                 leaders = json.loads(content)
-                print(f"[行业龙头-AI] 获取到 {len(leaders)} 只")
+                logger.info(f"[行业龙头-AI] 获取到 {len(leaders)} 只")
                 
                 # 批量获取实时价格（腾讯API支持多代码查询）
                 stock_codes_for_tencent = []
@@ -1041,7 +913,7 @@ class StockAnalyzer:
                                         change_pct = round((price - prev_close) / prev_close * 100, 2) if price > 0 and prev_close > 0 else 0
                                         price_map[code] = (price, change_pct)
                     except Exception as e:
-                        print(f"[行业龙头-价格] 批量获取失败: {e}")
+                        logger.info(f"[行业龙头-价格] 批量获取失败: {e}")
                 
                 # 组装结果
                 stocks = []
@@ -1066,31 +938,125 @@ class StockAnalyzer:
                 if stocks:
                     return stocks
         except Exception as e:
-            print(f"[行业龙头-AI] 获取失败: {e}")
+            logger.info(f"[行业龙头-AI] 获取失败: {e}")
         
         # AI失败时，使用硬编码数据作为降级方案
-        print(f"[行业龙头] AI获取失败，使用降级方案")
+        logger.info(f"[行业龙头] AI获取失败，使用降级方案")
         if industry and industry in self.INDUSTRY_LEADERS:
             filtered = [s for s in self.INDUSTRY_LEADERS[industry] if s['code'] != self.stock_code]
             return [{'code': s['code'], 'name': s['name'], 'price': 0, 'change_pct': 0, 'market': 'A股', 'industry': industry} for s in filtered[:limit]]
         
         return []
-    
+
+    # ═══════════════════════════════════════
+    #  行业龙头 JSON 自动更新（每天一次）
+    # ═══════════════════════════════════════
+    @staticmethod
+    def auto_refresh_industry_leaders():
+        """后台异步：用AI扫描所有行业，发现新龙头自动写入JSON"""
+        import threading
+        def _run():
+            try:
+                from logger import get_logger as _gl
+                _log = _gl("industry_refresh")
+                import json, os, config as _cfg
+
+                if not _cfg.DEEPSEEK_API_KEY:
+                    _log.info("[行业刷新] 无API Key，跳过")
+                    return
+
+                # 检查上次刷新时间（每天一次）
+                stamp_file = os.path.join(_cfg.DATA_DIR, ".industry_last_refresh")
+                today = __import__('datetime').datetime.now().strftime("%Y-%m-%d")
+                if os.path.exists(stamp_file):
+                    with open(stamp_file) as f:
+                        if f.read().strip() == today:
+                            _log.info("[行业刷新] 今日已刷新，跳过")
+                            return
+
+                # 加载当前 JSON
+                leaders_path = os.path.join(_cfg.DATA_DIR, "industry_leaders.json")
+                with open(leaders_path, 'r', encoding='utf-8') as f:
+                    current = json.load(f)
+
+                existing_codes = set()
+                for stocks in current.values():
+                    for s in stocks:
+                        existing_codes.add(s['code'])
+
+                _log.info(f"[行业刷新] 开始扫描 {len(current)} 个行业...")
+
+                import requests as _req
+                added_any = False
+
+                for industry in list(current.keys()):
+                    try:
+                        prompt = f'列出"{industry}"行业A股和港股龙头(各3-5只)，严格JSON: [{{"code":"股票代码","name":"名称","market":"A股/港股"}}]'
+                        resp = _req.post(
+                            _cfg.DEEPSEEK_API_URL,
+                            headers={"Authorization": f"Bearer {_cfg.DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+                            json={
+                                "model": _cfg.DEEPSEEK_MODEL,
+                                "messages": [{"role": "system", "content": "只返回JSON数组"}, {"role": "user", "content": prompt}],
+                                "temperature": 0.1, "max_tokens": 800,
+                            },
+                            timeout=30,
+                        )
+                        if resp.status_code == 200:
+                            content = resp.json()['choices'][0]['message']['content'].strip()
+                            m = __import__('re').search(r'\[.*\]', content, __import__('re').DOTALL)
+                            if m:
+                                ai_leaders = json.loads(m.group(0))
+                                new_entries = []
+                                for item in ai_leaders:
+                                    code = str(item.get('code', ''))
+                                    name = item.get('name', '')
+                                    if code and code not in existing_codes and len(code) in (5, 6):
+                                        new_entries.append({'code': code, 'name': name})
+                                        existing_codes.add(code)
+                                if new_entries:
+                                    current[industry].extend(new_entries)
+                                    _log.info(f"[行业刷新] {industry} +{len(new_entries)}只: {[n['name'] for n in new_entries]}")
+                                    added_any = True
+                    except Exception as e:
+                        _log.info(f"[行业刷新] {industry} 扫描失败: {e}")
+
+                if added_any:
+                    with open(leaders_path, 'w', encoding='utf-8') as f:
+                        json.dump(current, f, ensure_ascii=False, indent=2)
+                    # 清除 config 缓存，下次加载时读新文件
+                    _cfg._data_cache.pop("industry_leaders.json", None)
+                    _log.info("[行业刷新] JSON 已更新")
+
+                # 写入时间戳（无论有无更新，避免重复扫描）
+                with open(stamp_file, 'w') as f:
+                    f.write(today)
+                _log.info("[行业刷新] 完成")
+
+            except Exception as e:
+                try:
+                    _log.info(f"[行业刷新] 失败: {e}")
+                except:
+                    pass
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
     def get_kline_data(self, period='daily', limit=60):
         """获取K线数据 - 使用腾讯财经API"""
-        print(f"[K线] 开始获取 {period} {self.stock_code}")
+        logger.info(f"[K线] 开始获取 {period} {self.stock_code}")
         try:
             code = self.stock_code
             
-            # 确定腾讯symbol
-            if code.startswith('6'):
+            # 确定腾讯symbol — 港股(5位)优先判断，避免0开头误判为深证
+            if len(code) == 5:
+                symbol = f"hk{code.zfill(5)}"
+            elif code.startswith('6'):
                 symbol = f"sh{code}"
             elif code.startswith('0') or code.startswith('3'):
                 symbol = f"sz{code}"
-            elif len(code) == 5:
-                symbol = f"hk{code.zfill(5)}"
             elif code.startswith(('8', '4', '9')):
-                symbol = f"sz{code}"
+                symbol = f"bj{code}"  # 北交所
             else:
                 symbol = f"sz{code}"
             
@@ -1111,11 +1077,10 @@ class StockAnalyzer:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if data and data.get('data') and data['data'].get(symbol):
-                    stock_data = data['data'][symbol]
-                    # 根据周期查找对应的key: qfqday, qfqweek, qfqmonth
-                    key = f'qfq{p}'
-                    klines = stock_data.get(key, stock_data.get(p, []))
+                stock_data = (data.get('data') or {}).get(symbol)
+                if stock_data:
+                    # 根据周期查找对应的key: qfqday或day, qfqweek或week
+                    klines = stock_data.get(f'qfq{p}') or stock_data.get(p, [])
                     
                     result = []
                     for kline in klines:
@@ -1129,12 +1094,13 @@ class StockAnalyzer:
                                 'low': self._safe_float(kline[4]),
                                 'volume': self._safe_float(kline[5]),
                             })
-                    print(f"[K线数据-腾讯] {period} 获取到 {len(result)} 条")
+                    logger.info(f"[K线数据-腾讯] {period} 获取到 {len(result)} 条")
                     return result
+                else:
+                    logger.info(f"[K线数据-腾讯] symbol={symbol} 无数据")
         except Exception as e:
-            import traceback
-            print(f"[K线数据-腾讯] 失败: {e}")
-            traceback.print_exc()
+            logger.info(f"[K线数据-腾讯] 失败: {e}")
+            logger.exception(f"error in stock_analyzer")
         
         # 降级：尝试东方财富API
         try:
@@ -1180,10 +1146,10 @@ class StockAnalyzer:
                                 'low': self._safe_float(parts[4]),
                                 'volume': self._safe_float(parts[5]),
                             })
-                    print(f"[K线数据-东方财富] {period} 获取到 {len(result)} 条")
+                    logger.info(f"[K线数据-东方财富] {period} 获取到 {len(result)} 条")
                     return result
         except Exception as e:
-            print(f"[K线数据-东方财富] 也失败: {e}")
+            logger.info(f"[K线数据-东方财富] 也失败: {e}")
         
         return []
     
@@ -1215,6 +1181,6 @@ class StockAnalyzer:
                             'debt_ratio': latest.get('DEBT_ASSET_RATIO', 0),
                         }
         except Exception as e:
-            print(f"[财务数据] 获取失败: {e}")
+            logger.info(f"[财务数据] 获取失败: {e}")
         
         return None

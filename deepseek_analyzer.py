@@ -8,41 +8,10 @@ import random
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union
+from logger import get_logger
+import config
 
-# 日志函数
-import sys
-def log(message):
-    """简单的日志输出（兼容GBK编码）"""
-    try:
-        print(message, flush=True)
-    except UnicodeEncodeError:
-        # 兼容Windows GBK终端
-        safe_msg = message.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
-        print(safe_msg.encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding, errors='replace'), flush=True)
-
-# =============================================
-# [注意] DeepSeek API 密钥配置
-# =============================================
-# 使用环境变量方式（推荐，更安全）
-# 在命令行运行: set DEEPSEEK_API_KEY=your_key_here
-# 或 Linux/Mac: export DEEPSEEK_API_KEY=your_key_here
-import os
-from dotenv import load_dotenv
-
-# 先加载.env文件（确保在任何import之前读取到密钥）
-dotenv_loaded = load_dotenv()
-if not dotenv_loaded:
-    # 如果load_dotenv找不到.env文件，尝试从当前目录和父目录查找
-    for dotenv_path in ['.env', '../.env', os.path.join(os.path.dirname(__file__), '.env')]:
-        if os.path.exists(dotenv_path):
-            load_dotenv(dotenv_path)
-            break
-
-# 从环境变量读取API密钥
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-
-# DeepSeek API 地址（通常不需要修改）
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+logger = get_logger("deepseek")
 
 # =============================================
 # API密钥获取地址: https://platform.deepseek.com/
@@ -53,7 +22,7 @@ class DeepSeekAnalyzer:
     """DeepSeek AI 分析器"""
     
     def __init__(self, api_key: str = None):
-        self.api_key = api_key or DEEPSEEK_API_KEY
+        self.api_key = api_key or config.DEEPSEEK_API_KEY
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -75,7 +44,7 @@ class DeepSeekAnalyzer:
         Returns:
             AI分析结果和建议
         """
-        log("=== 开始AI基金分析 ===")
+        logger.info("=== 开始AI基金分析 ===")
         
         # 构建分析提示词
         prompt = self._build_analysis_prompt(fund_info, holdings, market_overview, news, kline_data)
@@ -83,11 +52,11 @@ class DeepSeekAnalyzer:
         try:
             # 调用DeepSeek API
             result = self._call_deepseek_api(prompt)
-            log("AI API调用成功 （非降级）")
+            logger.info("AI API调用成功")
             return result
         except Exception as e:
             error_msg = str(e)
-            log(f"AI API调用失败，使用降级方案: {error_msg}")
+            logger.warning(f"AI API调用失败，使用降级方案: {error_msg}")
             # 返回降级方案（带具体错误信息）
             return self._generate_fallback_analysis(fund_info, holdings, error_msg)
     
@@ -335,7 +304,7 @@ class DeepSeekAnalyzer:
             raise Exception("DeepSeek API密钥未配置")
         
         data = {
-            "model": "deepseek-chat",
+            "model": config.DEEPSEEK_MODEL,
             "messages": [
                 {
                     "role": "system",
@@ -347,41 +316,41 @@ class DeepSeekAnalyzer:
                 }
             ],
             "temperature": 0.3,  # 较低温度保证分析稳定性
-            "max_tokens": 4096
+            "max_tokens": config.AI_MAX_TOKENS
         }
         
         for attempt in range(retry_count):
             try:
                 response = requests.post(
-                    DEEPSEEK_API_URL,
+                    config.DEEPSEEK_API_URL,
                     headers=self.headers,
                     json=data,
-                    timeout=45
+                    timeout=config.REQUEST_TIMEOUT_LONG
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
                     content = result['choices'][0]['message']['content']
-                    log(f"[AI响应原始内容] {content[:500]}...")
+                    logger.info(f"[AI响应原始内容] {content[:500]}...")
                     return self._parse_ai_response(content)
                 elif response.status_code == 401:
                     raise Exception("API密钥无效")
                 elif response.status_code == 429:
-                    log("API请求频率限制，尝试重试...")
+                    logger.warning("API请求频率限制，尝试重试...")
                     time.sleep(5)
                     continue
                 else:
-                    log(f"API返回错误: {response.status_code} - {response.text}")
+                    logger.error(f"API返回错误: {response.status_code} - {response.text}")
                     raise Exception(f"API错误: {response.status_code}")
                     
             except requests.exceptions.Timeout:
-                log("API请求超时")
+                logger.error("API请求超时")
                 if attempt < retry_count - 1:
                     time.sleep(2)
                     continue
                 raise
             except requests.exceptions.RequestException as e:
-                log(f"网络请求错误: {e}")
+                logger.error(f"网络请求错误: {e}")
                 raise
         
         raise Exception("API请求失败")
@@ -402,7 +371,7 @@ class DeepSeekAnalyzer:
         # 尝试直接解析
         try:
             result = json.loads(content)
-            log("[AI解析成功] final_advice=" + str(result.get('final_advice','N/A')) + ", decision_reason_lens=" + str(len(result.get('decision_reason',''))))
+            logger.info(f"[AI解析成功] final_advice={result.get('final_advice','N/A')}")
             return result
         except json.JSONDecodeError:
             pass
@@ -423,17 +392,32 @@ class DeepSeekAnalyzer:
         
         try:
             result = json.loads(fixed_content)
-            log("[AI解析成功(容错)] final_advice=" + str(result.get('final_advice','N/A')))
+            logger.info(f"[AI解析成功(容错)] final_advice={result.get('final_advice','N/A')}")
             return result
         except json.JSONDecodeError:
             pass
         
-        log("JSON解析失败, 内容: " + content[:300])
-        raise Exception("AI返回格式错误（AI输出被截断或格式异常）")
+        logger.error(f"JSON解析失败: {content[:300]}")
+        # 返回结构化错误，避免上游崩溃
+        return {
+            "layer_triggered": -1,
+            "final_advice": "无法判断",
+            "advice_level": "低确定性",
+            "risk_filter_result": {"risk_summary": "AI响应解析失败"},
+            "quality_assessment": {"rating": "无法评估"},
+            "market_analysis": {"valuation_level": "无法判断"},
+            "decision_reason": f"AI响应格式异常（已截断{len(content)}字符），请重试。",
+            "action_plan": "建议稍后重新分析",
+            "confidence": 0.1,
+            "suitable_investors": "不适用",
+            "tips": ["AI响应解析失败，请重试"],
+            "fallback": True,
+            "parse_error": True,
+        }
     
     def _generate_fallback_analysis(self, fund_info: Dict, holdings: List[Dict], error_msg: str = "") -> Dict:
         """生成降级分析结果（当API不可用时）"""
-        log("使用降级分析方案...")
+        logger.warning("使用降级分析方案...")
         
         # 生成更准确的问题描述
         if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
@@ -507,7 +491,7 @@ class DeepSeekAnalyzer:
     
     def chat_about_fund(self, question: str, fund_info: Union[Dict, List], holdings: List[Dict]) -> Dict:
         """AI对话问答 - 回答用户关于基金的问题，支持单基金和组合模式"""
-        log(f"=== AI问答: {question[:50]}... ===")
+        logger.info(f"=== AI问答: {question[:50]}... ===")
         
         # 检测是否为组合/跨基金模式
         if isinstance(fund_info, list) or (isinstance(fund_info, dict) and fund_info.get('type') == 'portfolio'):
@@ -580,7 +564,7 @@ class DeepSeekAnalyzer:
                 raise Exception("DeepSeek API密钥未配置")
             
             data = {
-                "model": "deepseek-v4-pro",
+                "model": config.DEEPSEEK_MODEL,
                 "messages": [
                     {"role": "system", "content": "你是客观冷静的数据分析工具。只基于提供的基金数据进行计算和逻辑推理，输出简洁、中性、不带任何情感色彩。"},
                     {"role": "user", "content": prompt}
@@ -589,7 +573,7 @@ class DeepSeekAnalyzer:
                 "max_tokens": 1500
             }
             
-            response = requests.post(DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=120)
+            response = requests.post(config.DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=config.REQUEST_TIMEOUT_AI)
             
             if response.status_code == 200:
                 result = response.json()
@@ -598,18 +582,18 @@ class DeepSeekAnalyzer:
             else:
                 raise Exception(f"API错误: {response.status_code}")
         except Exception as e:
-            log(f"AI问答失败: {e}")
+            logger.error(f"AI问答失败: {e}")
             return {'answer': f'抱歉，AI暂时无法回答。错误: {str(e)}'}
 
     def ai_chat_with_prompt(self, prompt: str) -> Dict:
         """直接使用自定义prompt调用AI（支持自定义提示词，返回原始回答）"""
-        log("=== AI自定义Prompt对话 ===")
+        logger.info("=== AI自定义Prompt对话 ===")
         try:
             if not self.api_key:
                 raise Exception("DeepSeek API密钥未配置")
 
             data = {
-                "model": "deepseek-v4-pro",
+                "model": config.DEEPSEEK_MODEL,
                 "messages": [
                     {"role": "system", "content": "你是客观冷静的数据分析工具。只基于提供的基金数据进行计算和逻辑推理，输出简洁、中性、不带任何情感色彩。"},
                     {"role": "user", "content": prompt}
@@ -618,7 +602,7 @@ class DeepSeekAnalyzer:
                 "max_tokens": 2000
             }
 
-            response = requests.post(DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=120)
+            response = requests.post(config.DEEPSEEK_API_URL, headers=self.headers, json=data, timeout=config.REQUEST_TIMEOUT_AI)
 
             if response.status_code == 200:
                 result = response.json()
@@ -627,7 +611,7 @@ class DeepSeekAnalyzer:
             else:
                 raise Exception(f"API错误: {response.status_code}")
         except Exception as e:
-            log(f"AI自定义对话失败: {e}")
+            logger.error(f"AI自定义对话失败: {e}")
             return {'answer': f'抱歉，AI暂时无法回答。错误: {str(e)}'}
 
 
@@ -654,7 +638,7 @@ class StockNewsAnalyzer:
                         'source': '新浪财经'
                     })
         except Exception as e:
-            log(f"获取市场新闻失败: {e}")
+            logger.warning(f"获取市场新闻失败: {e}")
         
         return news[:10]
     
@@ -693,7 +677,7 @@ class StockNewsAnalyzer:
                             'datetime': data[30] + ' ' + data[31] if len(data) > 31 else ''
                         }
         except Exception as e:
-            log(f"获取股票行情失败 {stock_code}: {e}")
+            logger.warning(f"获取股票行情失败 {stock_code}: {e}")
         
         return None
     
@@ -725,7 +709,7 @@ class StockNewsAnalyzer:
                             pct_change = 0.0
                         # 验证数据合理性：百分比不应超过100%
                         if abs(pct_change) > 100:
-                            log(f"[警告] 指数{pct_change}%异常，使用备用计算")
+                            logger.warning(f"指数{pct_change}%异常，使用备用计算")
                             # 用涨跌额/昨收重新计算
                             prev_close = current - change
                             if prev_close != 0:
@@ -740,7 +724,7 @@ class StockNewsAnalyzer:
                             'prev_close': current - change
                         }
         except Exception as e:
-            log(f"获取指数行情失败: {e}")
+            logger.warning(f"获取指数行情失败: {e}")
         
         return None
 
@@ -751,15 +735,14 @@ __all__ = ['DeepSeekAnalyzer', 'StockNewsAnalyzer']
 
 # 测试代码
 if __name__ == "__main__":
-    # 测试代码
     analyzer = DeepSeekAnalyzer()
     
     # 测试市场新闻
-    print("测试市场新闻获取...")
+    logger.info("测试市场新闻获取...")
     news = StockNewsAnalyzer.get_market_news()
-    print(f"获取到 {len(news)} 条新闻")
+    logger.info(f"获取到 {len(news)} 条新闻")
     
     # 测试指数行情
-    print("\n测试指数行情获取...")
+    logger.info("\n测试指数行情获取...")
     quote = StockNewsAnalyzer.get_index_quote("sh000001")
-    print(f"上证指数: {quote}")
+    logger.info(f"上证指数: {quote}")
