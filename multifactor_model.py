@@ -430,36 +430,35 @@ class MultiFactorModel:
             'debt_ratio': None, 'quick_ratio': None, 'financial_raw': {},
         }
 
-        # 方法1：东方财富主要财务指标API
-        try:
-            url = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_F10_FINANCE_MAININDEX&columns=REPORT_DATE,BASIC_EPS,TOTAL_OPERATE_INCOME,PARENT_NETPROFIT,ROE,DEBT_ASSET_RATIO,GROSS_PROFIT_RATIO,TOTAL_OPERATE_INCOME_YOY,PARENT_NETPROFIT_YOY&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=4&sortTypes=-1&sortColumns=REPORT_DATE'
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://data.eastmoney.com/',
-                'Accept': 'application/json',
-            }
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data and data.get('result') and data['result'].get('data'):
-                    items = data['result']['data']
-                    if items and len(items) > 0:
-                        latest = items[0]
-                        # 东方财富ROE/毛利率/负债率/增速为百分比格式(如15.8代表15.8%)，需统一除以100
-                        roe_raw = self._safe_float(latest.get('ROE'))
-                        result['roe'] = roe_raw / 100.0 if roe_raw is not None and abs(roe_raw) > 1 else roe_raw
-                        debt_raw = self._safe_float(latest.get('DEBT_ASSET_RATIO'))
-                        result['debt_ratio'] = debt_raw / 100.0 if debt_raw is not None and abs(debt_raw) > 1 else debt_raw
-                        gm_raw = self._safe_float(latest.get('GROSS_PROFIT_RATIO'))
-                        result['gross_margin'] = gm_raw / 100.0 if gm_raw is not None and abs(gm_raw) > 1 else gm_raw
-                        rg_raw = self._safe_float(latest.get('TOTAL_OPERATE_INCOME_YOY'))
-                        result['revenue_growth'] = rg_raw / 100.0 if rg_raw is not None and abs(rg_raw) > 1 else rg_raw
-                        npg_raw = self._safe_float(latest.get('PARENT_NETPROFIT_YOY'))
-                        result['net_profit_growth'] = npg_raw / 100.0 if npg_raw is not None and abs(npg_raw) > 1 else npg_raw
-                        result['financial_raw'] = latest
-                        logger.info(f"  {code} 财务API成功: ROE={result['roe']}, Debt={result['debt_ratio']}")
-        except Exception as e:
-            logger.warning(f"  {code} 东方财富财务API失败: {e}")
+        # 方法1：东方财富主要财务指标API（用session + 重试2次）
+        for attempt in range(2):
+            try:
+                url = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_F10_FINANCE_MAININDEX&columns=REPORT_DATE,BASIC_EPS,TOTAL_OPERATE_INCOME,PARENT_NETPROFIT,ROE,DEBT_ASSET_RATIO,GROSS_PROFIT_RATIO,TOTAL_OPERATE_INCOME_YOY,PARENT_NETPROFIT_YOY&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=4&sortTypes=-1&sortColumns=REPORT_DATE'
+                resp = self._session.get(url, timeout=8)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data and data.get('result') and data['result'].get('data'):
+                        items = data['result']['data']
+                        if items and len(items) > 0:
+                            latest = items[0]
+                            roe_raw = self._safe_float(latest.get('ROE'))
+                            result['roe'] = roe_raw / 100.0 if roe_raw is not None and abs(roe_raw) > 1 else roe_raw
+                            debt_raw = self._safe_float(latest.get('DEBT_ASSET_RATIO'))
+                            result['debt_ratio'] = debt_raw / 100.0 if debt_raw is not None and abs(debt_raw) > 1 else debt_raw
+                            gm_raw = self._safe_float(latest.get('GROSS_PROFIT_RATIO'))
+                            result['gross_margin'] = gm_raw / 100.0 if gm_raw is not None and abs(gm_raw) > 1 else gm_raw
+                            rg_raw = self._safe_float(latest.get('TOTAL_OPERATE_INCOME_YOY'))
+                            result['revenue_growth'] = rg_raw / 100.0 if rg_raw is not None and abs(rg_raw) > 1 else rg_raw
+                            npg_raw = self._safe_float(latest.get('PARENT_NETPROFIT_YOY'))
+                            result['net_profit_growth'] = npg_raw / 100.0 if npg_raw is not None and abs(npg_raw) > 1 else npg_raw
+                            result['financial_raw'] = latest
+                            logger.info(f"  {code} 财务API成功: ROE={result['roe']}, Debt={result['debt_ratio']}")
+                        break  # 成功则跳出重试
+            except Exception as e:
+                if attempt == 0:
+                    time.sleep(1)  # 重试前等待1秒
+                else:
+                    logger.warning(f"  {code} 东方财富财务API失败: {e}")
 
         # 方法2：备用 - 使用StockAnalyzer
         if result['roe'] is None:
@@ -474,10 +473,10 @@ class MultiFactorModel:
             except Exception as e2:
                 logger.warning(f"  {code} 备用API也失败: {e2}")
 
-        # 现金流数据（尝试）
+        # 现金流数据（使用session）
         try:
             url2 = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DMSK_FN_CASHFLOW&columns=REPORT_DATE,NETCASH_OPERATE,PARENT_NETPROFIT,FREE_CASH_FLOW,TOTAL_OPERATE_INCOME&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=2&sortTypes=-1&sortColumns=REPORT_DATE'
-            resp2 = requests.get(url2, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'}, timeout=5)
+            resp2 = self._session.get(url2, timeout=8)
             if resp2.status_code == 200:
                 d2 = resp2.json()
                 items2 = d2.get('result', {}).get('data', []) if d2 and d2.get('result') else []
@@ -494,10 +493,10 @@ class MultiFactorModel:
         except Exception:
             pass
 
-        # 速动比率
+        # 速动比率（使用session）
         try:
             url3 = f'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DMSK_FN_BALANCE&columns=REPORT_DATE,QUICK_RATIO&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORT_DATE'
-            resp3 = requests.get(url3, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://data.eastmoney.com/'}, timeout=5)
+            resp3 = self._session.get(url3, timeout=8)
             if resp3.status_code == 200:
                 d3 = resp3.json()
                 items3 = d3.get('result', {}).get('data', []) if d3 and d3.get('result') else []
@@ -616,39 +615,35 @@ class MultiFactorModel:
     def _calc_M1(self, stock_details: Dict, holdings: List[Dict]) -> Dict:
         """M1: 个股质量加权评分（盈利30% + 成长25% + 现金流25% + 安全20%）"""
         stock_scores = []
+        data_missing_count = 0
         for h in holdings:
             code = h.get('code', '')
             d = stock_details.get(code, {})
             nw = h.get('norm_weight', 0)
 
             # 盈利能力 (30%): ROE 60% + 毛利率 40%
-            roe = d.get('roe')
-            roe_score = self._score_roe(roe)
-            gm = d.get('gross_margin')
-            industry = d.get('industry', '')
-            gm_score = self._score_gross_margin(gm, industry)
+            roe_score, roe_miss = self._score_roe(d.get('roe'))
+            gm_score, gm_miss = self._score_gross_margin(d.get('gross_margin'), d.get('industry', ''))
             profit_score = 0.60 * roe_score + 0.40 * gm_score
 
             # 成长性 (25%): 净利润增速 55% + 营收增速 45%
-            npg = d.get('net_profit_growth')
-            npg_score = self._score_net_profit_growth(npg)
-            rg = d.get('revenue_growth')
-            rg_score = self._score_revenue_growth(rg)
+            npg_score, npg_miss = self._score_net_profit_growth(d.get('net_profit_growth'))
+            rg_score, rg_miss = self._score_revenue_growth(d.get('revenue_growth'))
             growth_score = 0.55 * npg_score + 0.45 * rg_score
 
             # 现金流质量 (25%): OCF/NI 60% + FCF/Rev 40%
-            ocf_ni = d.get('ocf_to_ni')
-            ocf_score = self._score_ocf_ni(ocf_ni)
-            fcf_rev = d.get('fcf_to_rev')
-            fcf_score = self._score_fcf_rev(fcf_rev)
+            ocf_score, ocf_miss = self._score_ocf_ni(d.get('ocf_to_ni'))
+            fcf_score, fcf_miss = self._score_fcf_rev(d.get('fcf_to_rev'))
             cashflow_score = 0.60 * ocf_score + 0.40 * fcf_score
 
             # 财务安全性 (20%): 资产负债率 60% + 速动比率 40%
-            da = d.get('debt_ratio')
-            da_score = self._score_debt_ratio(da, industry)
-            qr = d.get('quick_ratio')
-            qr_score = self._score_quick_ratio(qr)
+            da_score, da_miss = self._score_debt_ratio(d.get('debt_ratio'), d.get('industry', ''))
+            qr_score, qr_miss = self._score_quick_ratio(d.get('quick_ratio'))
             safety_score = 0.60 * da_score + 0.40 * qr_score
+
+            # 统计缺失计数
+            if any([roe_miss, gm_miss, npg_miss, rg_miss, ocf_miss, fcf_miss, da_miss, qr_miss]):
+                data_missing_count += 1
 
             # 个股汇总
             stock_total = 0.30 * profit_score + 0.25 * growth_score + 0.25 * cashflow_score + 0.20 * safety_score
@@ -670,97 +665,96 @@ class MultiFactorModel:
         avg_safety = np.mean([s['safety'] for s in stock_scores]) if stock_scores else 50
 
         return {
-            'score': round(m1, 1),
+            'score': round(m1, 1) if stock_scores else 0,
             'sub_scores': {
-                'profitability': round(avg_profit, 1),
-                'growth': round(avg_growth, 1),
-                'cashflow': round(avg_cashflow, 1),
-                'safety': round(avg_safety, 1),
+                'profitability': round(avg_profit, 1) if stock_scores else 0,
+                'growth': round(avg_growth, 1) if stock_scores else 0,
+                'cashflow': round(avg_cashflow, 1) if stock_scores else 0,
+                'safety': round(avg_safety, 1) if stock_scores else 0,
             },
             'stock_scores': stock_scores,
+            'data_missing': data_missing_count,
             'top_positive': max(stock_scores, key=lambda x: x['total'])['name'] if stock_scores else '',
             'top_negative': min(stock_scores, key=lambda x: x['total'])['name'] if stock_scores else '',
         }
 
-    # M1 打分函数
+    # ── M1 打分函数（None=数据缺失，返回0并标注）──
     @staticmethod
     def _score_roe(roe):
-        if roe is None: return 50
-        if roe >= 0.25: return 100
-        if roe >= 0.20: return 90
-        if roe >= 0.15: return 75
-        if roe >= 0.10: return 55
-        if roe >= 0.05: return 35
-        if roe >= 0: return 20
-        return 5
+        if roe is None: return (0, True)    # (score, data_missing)
+        if roe >= 0.25: return (100, False)
+        if roe >= 0.20: return (90, False)
+        if roe >= 0.15: return (75, False)
+        if roe >= 0.10: return (55, False)
+        if roe >= 0.05: return (35, False)
+        if roe >= 0: return (20, False)
+        return (5, False)
 
     @staticmethod
     def _score_gross_margin(gm, industry=''):
-        if gm is None: return 50
+        if gm is None: return (0, True)
         bench = INDUSTRY_BENCHMARKS.get(industry, {})
         gm_median = bench.get('gm_median', 0.30)
         gm_p75 = bench.get('gm_p75', 0.50)
-        if gm_median is None:
-            gm_median = 0.30
-        if gm_p75 is None:
-            gm_p75 = 0.50
+        if gm_median is None: gm_median = 0.30
+        if gm_p75 is None: gm_p75 = 0.50
         score = 50 + 50 * (gm - gm_median) / (gm_p75 - gm_median) if gm_p75 != gm_median else 50
-        return min(100, max(0, score))
+        return (min(100, max(0, score)), False)
 
     @staticmethod
     def _score_net_profit_growth(npg):
-        if npg is None: return 40
-        if npg >= 0.50: return 100
-        if npg >= 0.30: return 85
-        if npg >= 0.15: return 70
-        if npg >= 0.05: return 50
-        if npg >= 0: return 30
-        if npg >= -0.10: return 15
-        return 5
+        if npg is None: return (0, True)
+        if npg >= 0.50: return (100, False)
+        if npg >= 0.30: return (85, False)
+        if npg >= 0.15: return (70, False)
+        if npg >= 0.05: return (50, False)
+        if npg >= 0: return (30, False)
+        if npg >= -0.10: return (15, False)
+        return (5, False)
 
     @staticmethod
     def _score_revenue_growth(rg):
-        if rg is None: return 40
-        if rg >= 0.30: return 100
-        if rg >= 0.20: return 85
-        if rg >= 0.10: return 65
-        if rg >= 0.05: return 45
-        if rg >= 0: return 25
-        return 10
+        if rg is None: return (0, True)
+        if rg >= 0.30: return (100, False)
+        if rg >= 0.20: return (85, False)
+        if rg >= 0.10: return (65, False)
+        if rg >= 0.05: return (45, False)
+        if rg >= 0: return (25, False)
+        return (10, False)
 
     @staticmethod
     def _score_ocf_ni(ocf_ni):
-        if ocf_ni is None: return 45
-        if ocf_ni >= 1.5: return 100
-        if ocf_ni >= 0.5: return 60 + 40 * (ocf_ni - 0.5)
-        if ocf_ni >= 0: return 60 * ocf_ni / 0.5
-        return 10
+        if ocf_ni is None: return (0, True)
+        if ocf_ni >= 1.5: return (100, False)
+        if ocf_ni >= 0.5: return (60 + 40 * (ocf_ni - 0.5), False)
+        if ocf_ni >= 0: return (60 * ocf_ni / 0.5, False)
+        return (10, False)
 
     @staticmethod
     def _score_fcf_rev(fcf_rev):
-        if fcf_rev is None: return 40
-        if fcf_rev >= 0.15: return 100
-        if fcf_rev >= 0.10: return 85
-        if fcf_rev >= 0.05: return 65
-        if fcf_rev >= 0: return 40
-        return 15
+        if fcf_rev is None: return (0, True)
+        if fcf_rev >= 0.15: return (100, False)
+        if fcf_rev >= 0.10: return (85, False)
+        if fcf_rev >= 0.05: return (65, False)
+        if fcf_rev >= 0: return (40, False)
+        return (15, False)
 
     @staticmethod
     def _score_debt_ratio(da, industry=''):
-        if da is None: return 50
+        if da is None: return (0, True)
         bench = INDUSTRY_BENCHMARKS.get(industry, {})
         da_p90 = bench.get('da_p90', 0.65)
         score = 100 - 80 * da / da_p90 if da_p90 > 0 else 50
-        return min(100, max(0, score))
+        return (min(100, max(0, score)), False)
 
     @staticmethod
     def _score_quick_ratio(qr):
-        if qr is None: return 50
-        if qr >= 1.5: return 100
-        if qr >= 1.0: return 80
-        if qr >= 0.7: return 55
-        if qr >= 0.4: return 30
-        return 10
+        if qr is None: return (0, True)
+        if qr >= 1.5: return (100, False)
+        if qr >= 1.0: return (80, False)
+        if qr >= 0.7: return (55, False)
+        if qr >= 0.4: return (30, False)
+        return (10, False)
 
     # ═══════════════════════════════════════
     # M2: 估值性价比
