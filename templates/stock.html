@@ -233,15 +233,17 @@
                 newsSection.innerHTML = `
                     <div style="margin-bottom:12px;color:#94a3b8;font-size:0.82em;">共 ${data.news.length} 条 · 来源：新浪财经 / 东方财富 / 腾讯财经</div>
                     <div class="news-grid">
-                        ${data.news.map(news => {
+                        ${data.news.map((news, idx) => {
                             const dotClass = news.type === '公告' ? 'dot-公告' : (news.type === '快讯' ? 'dot-快讯' : '');
                             const tagClass = news.type === '公告' ? 'tag-公告' : (news.type === '快讯' ? 'tag-快讯' : '');
                             const timeStr = (news.publish_time || '').slice(-5) || '';
-                            return `
-                            <div class="news-item" ${news.url ? `onclick="window.open('${escapeHtml(news.url)}', '_blank')"` : ''}>
+                            const linkHint = news.url ? ' <span style="font-size:9px;opacity:0.4;">↗</span>' : '';
+                            const newsId = `stocknews-${idx}-${Date.now()}`;
+                            const result = `
+                            <div class="news-item" id="${newsId}" title="${news.url ? '点击查看详情' : ''}">
                                 <div class="news-dot ${dotClass}"></div>
                                 <div class="news-content">
-                                    <div class="news-title">${escapeHtml(news.title || '')}</div>
+                                    <div class="news-title">${escapeHtml(news.title || '')}${linkHint}</div>
                                     <div class="news-meta">
                                         <span>${escapeHtml(news.publish_time || '')}</span>
                                         ${news.source ? `<span class="news-source-tag ${tagClass}">${escapeHtml(news.source)}</span>` : ''}
@@ -249,6 +251,15 @@
                                     </div>
                                 </div>
                             </div>`;
+                            // 通过 JS 绑定点击，避免 URL 被 HTML 转义破坏
+                            if (news.url) {
+                                const capturedUrl = news.url;
+                                setTimeout(() => {
+                                    const el = document.getElementById(newsId);
+                                    if (el) el.addEventListener('click', () => window.open(capturedUrl, '_blank'));
+                                }, 0);
+                            }
+                            return result;
                         }).join('')}
                     </div>
                 `;

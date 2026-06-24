@@ -1357,6 +1357,14 @@ body[data-theme="dark"] .theme-toggle::after {
     margin-top: 2px;
 }
 
+.saved-fund-change {
+    text-align: right;
+    flex-shrink: 0;
+    margin: 0 8px;
+    min-width: 70px;
+    line-height: 1.3;
+}
+
 .saved-fund-actions {
     display: flex;
     gap: 4px;

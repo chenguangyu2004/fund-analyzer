@@ -1082,13 +1082,23 @@
             `;
 
             if (data.news && data.news.length > 0) {
-                data.news.slice(0, 5).forEach(n => {
+                data.news.slice(0, 5).forEach((n, idx) => {
+                    const linkIcon = n.url ? ' <span style="font-size:10px;opacity:0.5;">↗</span>' : '';
+                    const newsId = `news-${idx}-${Date.now()}`;
                     html += `
-                        <div class="stock-news-item">
-                            <div class="stock-news-title">${n.title || ''}</div>
+                        <div class="stock-news-item" id="${newsId}" title="${n.url ? '点击查看详情' : ''}">
+                            <div class="stock-news-title">${n.title || ''}${linkIcon}</div>
                             <div class="stock-news-meta">${n.publish_time || ''} · ${n.source || ''}</div>
                         </div>
                     `;
+                    // 通过 JS 绑定点击，避免 URL 中的特殊字符被 HTML 转义破坏
+                    if (n.url) {
+                        const capturedUrl = n.url;
+                        setTimeout(() => {
+                            const el = document.getElementById(newsId);
+                            if (el) el.addEventListener('click', () => window.open(capturedUrl, '_blank'));
+                        }, 0);
+                    }
                 });
             } else {
                 html += '<div class="empty-state"><div class="stars"><span class="star">✦</span><span class="star">✧</span><span class="star">✦</span><span class="star">✧</span><span class="star">✦</span></div><i class="fas fa-newspaper"></i><p>暂无新闻</p></div>';
@@ -1311,12 +1321,56 @@
                         <div class="saved-fund-name">${cleanName}</div>
                         <div class="saved-fund-code">${f.fund_code} | 成本: ${f.buy_price} | 份额: ${f.shares}</div>
                     </div>
+                    <div class="saved-fund-change" id="fund-change-${i}">
+                        <span style="color:var(--text-muted);font-size:11px;">加载中...</span>
+                    </div>
                     <div class="saved-fund-actions">
                         <button class="saved-fund-btn" onclick="event.stopPropagation(); refreshSavedFund(${i})">刷新</button>
                         <button class="saved-fund-btn delete" onclick="event.stopPropagation(); deleteSavedFund(${i})">删除</button>
                     </div>
                 </div>`;
             }).join('');
+
+            // 异步获取每只基金的涨跌
+            savedFunds.forEach((f, i) => fetchFundChange(f, i));
+        }
+
+        // 获取单只基金的当日涨跌
+        async function fetchFundChange(f, index) {
+            const el = document.getElementById(`fund-change-${index}`);
+            if (!el) return;
+            try {
+                const resp = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fund_code: f.fund_code, buy_price: f.buy_price, shares: f.shares })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    const fi = result.data.fund_info;
+                    const pl = result.data.profit_loss;
+                    const nav = fi.net_value || 0;
+                    const growth = fi.day_growth || 0;
+                    const dayProfit = pl ? pl.day_profit : 0;
+                    const sign = growth >= 0 ? '+' : '';
+                    const color = growth >= 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+                    el.innerHTML = `
+                        <div style="font-size:12px;font-weight:500;">
+                            <span style="font-family:var(--font-mono);font-feature-settings:'tnum';">净值 ${nav.toFixed(4)}</span>
+                        </div>
+                        <div style="font-size:13px;font-weight:600;color:${color};font-family:var(--font-mono);font-feature-settings:'tnum';">
+                            ${sign}${growth.toFixed(2)}%
+                        </div>
+                        <div style="font-size:10px;color:${color};font-family:var(--font-mono);font-feature-settings:'tnum';">
+                            ${sign}${dayProfit.toFixed(2)}
+                        </div>
+                    `;
+                } else {
+                    el.innerHTML = '<span style="color:var(--text-muted);font-size:11px;">--</span>';
+                }
+            } catch (e) {
+                el.innerHTML = '<span style="color:var(--text-muted);font-size:11px;">获取失败</span>';
+            }
         }
 
         function loadSavedFund(index) {

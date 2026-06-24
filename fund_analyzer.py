@@ -534,11 +534,33 @@ class FundAnalyzer:
             return None
 
     def _get_fund_holdings(self, top=10):
-        """获取基金前十大持仓（支持所有基金类型：A股/QDII/港股/美股）"""
+        """获取基金前十大持仓（支持所有基金类型：A股/QDII/港股/美股）
+        ETF联接基金自动穿透到底层ETF获取真实持仓
+        """
         logger.info(f"[持仓] 开始获取 {self.fund_code} 的持仓数据...")
         
         # 方法1: 天天基金网（A股基金）
         holdings = self._fetch_holdings_eastmoney(top)
+        
+        # ETF联接基金：持仓极少或为空 → 穿透到底层ETF
+        if (not holdings or len(holdings) < 5):
+            fund_name = (self.fund_data or {}).get('fund_name', '')
+            if not fund_name:
+                try:
+                    info = self._get_official_net_value()
+                    fund_name = info.get('fund_name', '') if info else ''
+                except:
+                    pass
+            if 'ETF联接' in fund_name or 'ETF链接' in fund_name:
+                etf_code = self._find_underlying_etf(fund_name)
+                if etf_code:
+                    logger.info(f"[持仓] ETF联接基金 → 穿透底层ETF {etf_code} 取持仓")
+                    etf_holdings = self._fetch_etf_holdings(etf_code, top)
+                    if etf_holdings and len(etf_holdings) >= 3:
+                        logger.info(f"[持仓] 底层ETF有{len(etf_holdings)}只持仓，使用ETF数据")
+                        holdings = etf_holdings
+                    elif etf_holdings:
+                        logger.info(f"[持仓] 底层ETF仅{len(etf_holdings)}只，保持联接基金数据")
         
         # 方法4: QDII基金专用（港股持仓）
         if not holdings or len(holdings) == 0:
@@ -570,12 +592,16 @@ class FundAnalyzer:
         
         return holdings
 
-    def _fetch_holdings_eastmoney(self, top=10):
-        """方法1: 天天基金网（支持A股+港股/QDII持仓）"""
+    def _fetch_holdings_eastmoney(self, top=10, year=None):
+        """方法1: 天天基金网（支持A股+港股/QDII持仓）
+        year: 指定年份，None=最新季报
+        """
         try:
             # top=0 表示获取全部持仓（最多50只）
             actual_top = top if top > 0 else 50
             url = f"http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={self.fund_code}&topline={actual_top}&rt={time.time()}"
+            if year:
+                url += f"&year={year}"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'http://fund.eastmoney.com/'
@@ -700,6 +726,57 @@ class FundAnalyzer:
             return []
         except Exception as e:
             logger.info(f"[持仓·方法3] 失败: {e}")
+            return []
+
+    def _find_underlying_etf(self, fund_name):
+        """从ETF联接基金名称中查找底层ETF代码"""
+        try:
+            etf_name = fund_name.strip()
+            for suffix in ['联接E', '联接C', '联接A', '链接E', '链接C', '链接A']:
+                if suffix in etf_name:
+                    etf_name = etf_name.replace(suffix, '')
+                    break
+            logger.info(f"[ETF穿透] 搜索底层ETF: {etf_name}")
+            info_url = f"http://fund.eastmoney.com/{self.fund_code}.html"
+            resp = requests.get(info_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+            resp.encoding = 'utf-8'  # 东方财富用UTF-8，requests可能误判
+            if resp.status_code == 200:
+                import re
+                html = resp.text
+                # 方法1: href中含"查看相关ETF"的链接 → 底层ETF代码
+                m = re.search(r'href="[^"]*?/(\d{6})\.html"[^>]*>查看相关ETF', html)
+                if m:
+                    code = m.group(1)
+                    if code != self.fund_code:
+                        logger.info(f"[ETF穿透] 通过'查看相关ETF'找到: {code}")
+                        return code
+                # 方法2: fallback — 匹配有ETF名称的代码
+                core_name = re.sub(r'ETF.*$', '', etf_name).strip()[:4]
+                for m in re.finditer(r'(159\d{3}|5[168]\d{4})\b', html):
+                    ctx = html[m.start()-80:m.end()+80]
+                    name_m = re.search(r'>([^<]{2,20}(?:ETF|etf)[^<]*)<', ctx)
+                    if name_m and core_name in name_m.group(1):
+                        logger.info(f"[ETF穿透] 名称匹配: {m.group()} {name_m.group(1)}")
+                        return m.group()
+        except Exception as e:
+            logger.info(f"[ETF穿透] 搜索失败: {e}")
+        return None
+
+    def _fetch_etf_holdings(self, etf_code, top=10):
+        """获取ETF的持仓（ETF本质上是场内基金，持仓接口与普通基金相同）"""
+        try:
+            logger.info(f"[ETF持仓] 开始获取ETF {etf_code} 的持仓...")
+            original_code = self.fund_code
+            self.fund_code = etf_code
+            holdings = self._fetch_holdings_eastmoney(top)
+            self.fund_code = original_code
+            if holdings:
+                logger.info(f"[ETF持仓] OK 获取到 {len(holdings)} 条")
+                # 获取实时价格
+                self._get_stock_prices(holdings)
+            return holdings
+        except Exception as e:
+            logger.info(f"[ETF持仓] 失败: {e}")
             return []
 
     def _fetch_holdings_qdii(self, top=10):
